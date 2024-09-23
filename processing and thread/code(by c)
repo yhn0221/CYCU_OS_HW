@@ -1,0 +1,1665 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h> // 引入sleep的標頭檔
+int page[100]={-1};//要求page順序
+typedef struct {
+    int pageID;
+    int inside_time;
+    // int arrivalTime;
+    // int priority;
+} Page;
+int replace_mem_idx,replace_pages_idx;//記錄自演算法返回的值，將要被取代的資料索引
+
+
+typedef struct {
+    int **sort; 
+    int pagecount;
+} SortData;
+static SortData sortData;
+
+// int compare_inside_time(const void *a, const void *b) {
+//     int indexA = *(int *)a;
+//     int indexB = *(int *)b;
+//     return sortData.sort[0][indexA] - sortData.sort[0][indexB];
+// }
+
+int mem_idx_to_pages_idx(int *mem,int pageframe,int target,int norepeat_page_count,Page *pages){
+    for(int i=0;i<norepeat_page_count;i++){//在pages結構裡面找目標的idx
+        if (target == pages[i].pageID){
+            return i;
+        }
+    }
+}
+
+void fifo(int need,int norepeat_page_count,int *mem,int pageframe,Page *pages){
+    int check=0;
+    for(int i=0;i<pageframe;i++){
+        int temp = mem[i];
+        if(temp==-1){//找到空位
+            replace_mem_idx=i;
+            for(int j=pageframe-2;j>-1;j--){
+                mem[j+1]=mem[j];
+            }
+            replace_mem_idx=0;
+            check=1;
+            break;
+        } 
+    }
+    if(check==0){
+            //找最小值mem中的進入時間的最小值
+            int min_inside_time;
+            int idx=mem_idx_to_pages_idx(mem, pageframe, mem[0], norepeat_page_count,pages);
+            replace_pages_idx=idx;
+            min_inside_time=pages[idx].inside_time;
+            replace_mem_idx=0;
+            int temp2;//紀錄最後哪個要被取代
+            for(int i=0;i<pageframe;i++){
+                idx=mem_idx_to_pages_idx(mem, pageframe, mem[i], norepeat_page_count,pages);
+                if(pages[idx].inside_time<min_inside_time){//找到更小的進入時間
+                    replace_pages_idx=idx;
+                    min_inside_time=pages[idx].inside_time;
+                    replace_mem_idx=0;
+                    temp2=i;
+                }
+            }
+            printf("now insert:%d , temp2=%d\n",need,temp2);
+            for(int j=temp2-1;j>-1;j--){//
+                mem[j+1]=mem[j];
+            }
+    }
+}
+// int task1(pages, pagecount,pageframe,fileName,norepeat_page_count,task);
+// int task2(pages, pagecount,pageframe,fileName,norepeat_page_count,task);
+// int task3(pages, pagecount,pageframe,fileName,norepeat_page_count,task);
+// int task4(pages, pagecount,pageframe,fileName,norepeat_page_count,task);
+// int task5(pages, pagecount,pageframe,fileName,norepeat_page_count,task);
+int  task4_(Page *pages, int pagecount,int pageframe,const char* fileName,int norepeat_page_count,FILE *outputFile){
+    //pageframe:代表mem可以放幾個page
+    //pagecount:共要求page多少次
+    int mem[3][pageframe];
+    int pf_count=0,pr_count=0,mem_count=0;//mem_count 紀錄目前有多少page曾經進入mem，以判斷有沒有page replace發生
+    for(int i=0;i<pageframe;i++){
+        mem[0][i]=-1;//page ID
+        mem[1][i]=0;//Page used frequency使用頻率
+        mem[2][i]=-1;//page進入mem時間
+    }
+    int time=-1;
+    //建立輸出檔案
+
+    fprintf(outputFile, "--------------Most Frequently Used Page Replacement -----------------------\n");
+
+
+    while(time < pagecount-1){
+        time++;
+        int need=page[time];//當前要求的page id
+        fprintf(outputFile, "%d\t",need);
+        int pf=1;//pf=1 發生page fault ; pf=0 沒發生page fault
+        int temp3;//紀錄mem裡是哪個和目前要插入的資料重複了
+        for(int i=0;i<pageframe;i++){//確認mem中有沒有該page
+            if(mem[0][i]==need){
+                pf=0;
+                temp3=i;//紀錄mem裡是哪個和目前要插入的資料重複了
+                break;
+            }
+        }
+        if(pf==0){//pf=0 沒發生page fault
+            mem[1][temp3]++;//記錄他的使用頻率
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\n");
+        }
+        else{//pf==1發生page fault 
+            pf_count++;
+            if (mem_count>=pageframe){//判斷是否有交換
+                pr_count++;
+            }
+            mem_count++;
+
+            //LFU
+            if(mem_count>pageframe){//mem沒有空位
+                int check=0;//check=0,MFU成功  ;  check=1,要搭配FIFO
+                int tempp[pageframe];//紀錄最小使用頻率的page有多少個page和他相同(紀錄page 在mem id)
+                for(int i=0;i<pageframe;i++){
+                    tempp[i]=-1;
+                }
+                //判斷執行MFU或是FIFO
+                int max_uf;//最小使用頻率
+                max_uf=-1;
+                int temp=0;//紀錄tempp[]中哪個索引開始是空的,也可以用來判斷tempp[]中有多少個資料，代表有多少最小的使用頻率重複
+                for(int i=0;i<pageframe;i++){
+                    // printf("hi\n");
+                    if(max_uf==mem[1][i]){
+                        for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                            if(tempp[j]==-1){
+                                temp=j;
+                                break;
+                            }
+                        }
+                        tempp[temp]=i;                       
+                    }
+                    else if (max_uf<mem[1][i]){//找到更小的mem
+                        // printf("找到更小的mem uf,need:%d  mem[0][i];%d",need,mem[0][i]);
+                        for(int j=0;j<pageframe;j++){//重置 tempp[]
+                            tempp[j]=-1;
+                        }
+                        max_uf=mem[1][i];
+                        tempp[0]=i;   
+                        //temp=0;//重置temp       
+                    }
+                    
+                }
+                //
+                int count=0;
+                for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                    if(tempp[j]==-1){
+                        //printf("%d ",tempp[j]);
+                        break;
+                    }
+                    else{
+                        count++;
+                        //printf("%d ",tempp[j]);
+                    }
+                }
+                //LFU
+                if(count==1){//MFU
+                printf("need:%d\n",need);
+                    for(int i=tempp[0]-1;i>-1;i--){
+                        mem[0][i+1]=mem[0][i];
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                    }
+                    mem[0][0]=need;               
+                    mem[1][0]=0;
+                    mem[2][0]=time;
+                } 
+
+
+
+                //LFU 
+
+                ///////
+
+                //FIFO
+                else{//FIFO  只比較tempp[]中的page誰的抵達時間比較小
+                    printf("now fifo,need=%d\n",need);
+                    for(int i=0;i<pageframe;i++){
+                        printf("tempp[%d]:%d \n",i,tempp[i]);
+                    }
+                    int min_inside_time=1000;
+                    int min_inside_time_idx=1000;
+                    int mem_idx;
+                    for(int i=0;i<pageframe;i++){
+                        if(tempp[i]==-1){
+                            break;
+                        }
+                        //printf("mem_idx %d \n",tempp[i]);
+                        if(min_inside_time>mem[2][tempp[i]]){
+                            min_inside_time=mem[2][tempp[i]];
+                            min_inside_time_idx=tempp[i];
+                        }
+                    }
+                    printf("min inside time=%d\n",min_inside_time);
+                    printf("min inside time idx=%d\n",min_inside_time_idx);
+
+                    for(int i=min_inside_time_idx-1;i>-1;i--){//往後挪
+                        mem[0][i+1]=mem[0][i];
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                    }
+                    mem[0][0]=need;
+                    mem[1][0]=0;
+                    mem[2][0]=time;                    
+                }
+
+                
+
+            }
+            else{//mem有空位
+                for(int i=0;i<pageframe;i++){
+                    int temp = mem[0][i];
+                    if(temp==-1){//找到空位
+                        for(int j=pageframe-2;j>-1;j--){
+                            mem[0][j+1]=mem[0][j];
+                            mem[1][j+1]=mem[1][j];
+                            mem[2][j+1]=mem[2][j];
+                        }
+                        mem[0][0]=need;
+                        mem[1][0]=0;
+                        mem[2][0]=time;
+                        //printf("need=%d,mem:%d %d %d",need ,mem[0][0],mem[0][1],mem[0][2]);
+                        break;
+                    } 
+                }            
+
+            }
+
+
+           
+
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){////test
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\t");
+            fprintf(outputFile, "F\n");
+        }
+
+    }
+    fprintf(outputFile, "Page Fault = %d  Page Replaces = %d  Page Frames = %d\n",pf_count,pr_count,pageframe);
+
+
+
+}
+int  task3_(Page *pages, int pagecount,int pageframe,const char* fileName,int norepeat_page_count,FILE *outputFile){
+    //pageframe:代表mem可以放幾個page
+    //pagecount:共要求page多少次
+    int mem[3][pageframe];
+    int pf_count=0,pr_count=0,mem_count=0;//mem_count 紀錄目前有多少page曾經進入mem，以判斷有沒有page replace發生
+    for(int i=0;i<pageframe;i++){
+        mem[0][i]=-1;//page ID
+        mem[1][i]=0;//Page used frequency使用頻率
+        mem[2][i]=-1;//page進入mem時間
+    }
+    int time=-1;
+    //建立輸出檔案
+
+
+  
+    fprintf(outputFile, "--------------Least Frequently Used Page Replacement-----------------------\n");
+
+
+
+    while(time < pagecount-1){
+        time++;
+        int need=page[time];//當前要求的page id
+        fprintf(outputFile, "%d\t",need);
+        int pf=1;//pf=1 發生page fault ; pf=0 沒發生page fault
+        int temp3;//紀錄mem裡是哪個和目前要插入的資料重複了
+        for(int i=0;i<pageframe;i++){//確認mem中有沒有該page
+            if(mem[0][i]==need){
+                pf=0;
+                temp3=i;//紀錄mem裡是哪個和目前要插入的資料重複了
+                break;
+            }
+        }
+        if(pf==0){//pf=0 沒發生page fault
+            mem[1][temp3]++;//記錄他的使用頻率
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\n");
+        }
+        else{//pf==1發生page fault 
+            pf_count++;
+            if (mem_count>=pageframe){//判斷是否有交換
+                pr_count++;
+            }
+            mem_count++;
+
+            //LFU
+            if(mem_count>pageframe){//mem沒有空位
+                int check=0;//check=0,LFU成功  ;  check=1,要搭配FIFO
+                int tempp[pageframe];//紀錄最小使用頻率的page有多少個page和他相同(紀錄page 在mem id)
+                for(int i=0;i<pageframe;i++){
+                    tempp[i]=-1;
+                }
+                //判斷執行LFU或是FIFO
+                int min_uf;//最小使用頻率
+                min_uf=100;
+                int temp=0;//紀錄tempp[]中哪個索引開始是空的,也可以用來判斷tempp[]中有多少個資料，代表有多少最小的使用頻率重複
+                for(int i=0;i<pageframe;i++){
+                    // printf("hi\n");
+                    if(min_uf==mem[1][i]){
+                        for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                            if(tempp[j]==-1){
+                                temp=j;
+                                break;
+                            }
+                        }
+                        tempp[temp]=i;                       
+                    }
+                    else if (min_uf>mem[1][i]){//找到更小的mem
+                        // printf("找到更小的mem uf,need:%d  mem[0][i];%d",need,mem[0][i]);
+                        for(int j=0;j<pageframe;j++){//重置 tempp[]
+                            tempp[j]=-1;
+                        }
+                        min_uf=mem[1][i];
+                        tempp[0]=i;   
+                        //temp=0;//重置temp       
+                    }
+                    
+                }
+                //
+                int count=0;
+                for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                    if(tempp[j]==-1){
+                        //printf("%d ",tempp[j]);
+                        break;
+                    }
+                    else{
+                        count++;
+                        //printf("%d ",tempp[j]);
+                    }
+                }
+                //LFU
+                if(count==1){//LFU
+                printf("need:%d\n",need);
+                    for(int i=tempp[0]-1;i>-1;i--){
+                        mem[0][i+1]=mem[0][i];
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                    }
+                    mem[0][0]=need;               
+                    mem[1][0]=0;
+                    mem[2][0]=time;
+                } 
+
+
+
+                //LFU 
+
+                ///////
+
+                //FIFO
+                else{//FIFO  只比較tempp[]中的page誰的抵達時間比較小
+                    printf("now fifo,need=%d\n",need);
+                    for(int i=0;i<pageframe;i++){
+                        printf("tempp[%d]:%d \n",i,tempp[i]);
+                    }
+                    int min_inside_time=1000;
+                    int min_inside_time_idx=1000;
+                    int mem_idx;
+                    for(int i=0;i<pageframe;i++){
+                        if(tempp[i]==-1){
+                            break;
+                        }
+                        //printf("mem_idx %d \n",tempp[i]);
+                        if(min_inside_time>mem[2][tempp[i]]){
+                            min_inside_time=mem[2][tempp[i]];
+                            min_inside_time_idx=tempp[i];
+                        }
+                    }
+                    printf("min inside time=%d\n",min_inside_time);
+                    printf("min inside time idx=%d\n",min_inside_time_idx);
+
+                    for(int i=min_inside_time_idx-1;i>-1;i--){//往後挪
+                        mem[0][i+1]=mem[0][i];
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                    }
+                    mem[0][0]=need;
+                    mem[1][0]=0;
+                    mem[2][0]=time;                    
+                }
+            }
+            else{//mem有空位
+                for(int i=0;i<pageframe;i++){
+                    int temp = mem[0][i];
+                    if(temp==-1){//找到空位
+                        for(int j=pageframe-2;j>-1;j--){
+                            mem[0][j+1]=mem[0][j];
+                            mem[1][j+1]=mem[1][j];
+                            mem[2][j+1]=mem[2][j];
+                        }
+                        mem[0][0]=need;
+                        mem[1][0]=0;
+                        mem[2][0]=time;
+                        //printf("need=%d,mem:%d %d %d",need ,mem[0][0],mem[0][1],mem[0][2]);
+                        break;
+                    } 
+                }            
+
+            }
+
+
+           
+
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){////test
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\t");
+            fprintf(outputFile, "F\n");
+        }
+
+    }
+    fprintf(outputFile, "Page Fault = %d  Page Replaces = %d  Page Frames = %d\n",pf_count,pr_count,pageframe);
+
+
+}
+int  task2_(Page *pages, int pagecount,int pageframe,const char* fileName,int norepeat_page_count,FILE *outputFile){
+    //pageframe:代表mem可以放幾個page
+    //pagecount:共要求page多少次
+    //解法就是:不管有沒有pf的發生，就直接把新進的page放前面，其他往後移
+    int mem[pageframe];
+    int pf_count=0,pr_count=0,mem_count=0;//mem_count 紀錄目前有多少page曾經進入mem，以判斷有沒有page replace發生
+    for(int i=0;i<pageframe;i++){
+        mem[i]=-1;
+    }
+    int time=-1;
+    //建立輸出檔案
+
+
+    fprintf(outputFile, "--------------LRU-----------------------\n");
+
+
+
+
+    while(time < pagecount-1){
+        time++;
+        int need=page[time];//當前要求的page id
+        fprintf(outputFile, "%d\t",need);
+        int pf=1;//pf=1 發生page fault ; pf=0 沒發生page fault
+        int temp3;//紀錄mem裡是哪個和目前要插入的資料重複了
+        for(int i=0;i<pageframe;i++){//確認mem中有沒有該page
+            if(mem[i]==need){
+                pf=0;
+                temp3=i;//紀錄mem裡是哪個和目前要插入的資料重複了
+                break;
+            }
+        }
+        if(pf==0){//pf=0 沒發生page fault
+            for(int i=temp3-1;i>-1;i--){
+                mem[i+1]=mem[i];
+            }
+            mem[0]=need;
+            for(int i=0;i<pageframe;i++){
+                if(mem[i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[i]);
+            }
+            fprintf(outputFile, "\n");
+        }
+        else{//pf==1發生page fault 
+            pf_count++;
+            if (mem_count>=pageframe){//判斷是否有交換
+                pr_count++;
+            }
+            for(int i=pageframe-1;i>-1;i--){
+                mem[i+1]=mem[i];
+            }
+            mem[0]=need;
+            mem_count++;
+            for(int i=0;i<pageframe;i++){
+                if(mem[i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[i]);
+            }
+            fprintf(outputFile, "\t");
+            fprintf(outputFile, "F\n");
+        }
+
+    }
+    fprintf(outputFile, "Page Fault = %d  Page Replaces = %d  Page Frames = %d\n",pf_count,pr_count,pageframe);
+
+
+
+}
+
+int  task1_(Page *pages, int pagecount,int pageframe,const char* fileName,int norepeat_page_count,FILE *outputFile){
+    //pageframe:代表mem可以放幾個page
+    //pagecount:共要求page多少次
+    int mem[pageframe];
+    int pf_count=0,pr_count=0,mem_count=0;//mem_count 紀錄目前有多少page曾經進入mem，以判斷有沒有page replace發生
+    for(int i=0;i<pageframe;i++){
+        mem[i]=-1;
+    }
+    int time=-1;
+    //建立輸出檔案
+
+    fprintf(outputFile, "--------------FIFO-----------------------\n");
+
+
+    while(time < pagecount-1){
+        time++;
+        int need=page[time];//當前要求的page id
+        fprintf(outputFile, "%d\t",need);
+        int pf=1;//pf=1 發生page fault ; pf=0 沒發生page fault
+        for(int i=0;i<pageframe;i++){//確認mem中有沒有該page
+            if(mem[i]==need){
+                pf=0;
+                break;
+            }
+        }
+        if(pf==0){//pf=0 沒發生page fault
+            for(int i=0;i<pageframe;i++){
+                if(mem[i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[i]);
+            }
+            fprintf(outputFile, "\n");
+        }
+        else{//pf==1發生page fault 
+            pf_count++;
+            if (mem_count>=pageframe){//判斷是否有交換
+                pr_count++;
+            }
+            
+            fifo(need,norepeat_page_count, mem,pageframe,pages);//回傳mem,pages中的idx
+            mem[replace_mem_idx]=need;
+            //找要進入的資料的pageidx，並且修改進入時間
+            int idx=mem_idx_to_pages_idx(mem, pageframe, need, norepeat_page_count,pages);
+            pages[idx].inside_time=time;
+            mem_count++;
+            for(int i=0;i<pageframe;i++){
+                if(mem[i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[i]);
+            }
+            fprintf(outputFile, "\t");
+            fprintf(outputFile, "F\n");
+        }
+
+    }
+    fprintf(outputFile, "Page Fault = %d  Page Replaces = %d  Page Frames = %d\n",pf_count,pr_count,pageframe);
+
+
+
+    
+}
+int  task5_(Page *pages, int pagecount,int pageframe,const char* fileName,int norepeat_page_count,FILE *outputFile){
+    //pageframe:代表mem可以放幾個page
+    //pagecount:共要求page多少次
+    int mem[3][pageframe];
+    int pf_count=0,pr_count=0,mem_count=0;//mem_count 紀錄目前有多少page曾經進入mem，以判斷有沒有page replace發生
+    for(int i=0;i<pageframe;i++){
+        mem[0][i]=-1;//page ID
+        mem[1][i]=0;//Page used frequency使用頻率
+        mem[2][i]=-1;//page進入mem時間
+    }
+    int time=-1;
+    //建立輸出檔案
+
+    fprintf(outputFile, "--------------Least Frequently Used LRU Page Replacement-----------------------\n");
+
+
+    while(time < pagecount-1){
+        time++;
+        int temp3;//紀錄mem裡是哪個和目前要插入的資料重複了
+        int need=page[time];//當前要求的page id
+        fprintf(outputFile, "%d\t",need);
+        int pf=1;//pf=1 發生page fault ; pf=0 沒發生page fault
+        for(int i=0;i<pageframe;i++){//確認mem中有沒有該page
+            if(mem[0][i]==need){
+                pf=0;
+                temp3=i;//紀錄mem裡是哪個和目前要插入的資料重複了
+                break;
+            }
+        }
+        if(pf==0){//pf=0 沒發生page fault
+            mem[1][temp3]++;//記錄他的使用頻率
+            int a,b,c;
+            a=mem[0][temp3];
+            b=mem[1][temp3];
+            c=mem[2][temp3];
+            for(int i=temp3-1;i>-1;i--){
+                mem[0][i+1]=mem[0][i];
+                mem[1][i+1]=mem[1][i];
+                mem[2][i+1]=mem[2][i];
+            }
+            mem[0][0]=a;
+            mem[1][0]=b;
+            mem[2][0]=c;
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\n");
+        }
+        else{//pf==1發生page fault 
+            pf_count++;
+            if (mem_count>=pageframe){//判斷是否有交換
+                pr_count++;
+            }
+            mem_count++;    
+
+            //LFU
+            if(mem_count>pageframe){//mem沒有空位
+                int check=0;//check=0,LFU成功  ;  check=1,要搭配FIFO
+                int tempp[pageframe];//紀錄最小使用頻率的page有多少個page和他相同(紀錄page 在mem id)
+                for(int i=0;i<pageframe;i++){
+                    tempp[i]=-1;
+                }
+                //判斷執行LFU或是FIFO
+                int min_uf;//最小使用頻率
+                min_uf=100;
+                int temp=0;//紀錄tempp[]中哪個索引開始是空的,也可以用來判斷tempp[]中有多少個資料，代表有多少最小的使用頻率重複
+                for(int i=0;i<pageframe;i++){
+                    if(need==3){
+                        printf("aaaaa i:%d  mem[0][i]:%d  mem[1][i]:%d\n",i,mem[0][i],mem[1][i]);
+                    }
+
+                    if(min_uf==mem[1][i]){
+                        for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                            if(tempp[j]==-1){
+                                temp=j;
+                                break;
+                            }
+                        }
+                        tempp[temp]=i;                       
+                    }
+                    else if (min_uf>mem[1][i]){//找到更小的mem
+                        printf("找到更小的mem uf,need:%d  mem[0][i];%d",need,mem[0][i]);
+                        for(int j=0;j<pageframe;j++){//重置 tempp[]
+                            tempp[j]=-1;
+                        }
+                        min_uf=mem[1][i];
+                        tempp[0]=i;
+                        if(need==3){
+                            printf("min_uf%d  %d\n",min_uf,tempp[0]);
+                        }
+                        //temp=0;//重置temp       
+                    }
+                    
+                }
+                    
+                
+                for(int j=0;j<pageframe;j++){
+                    if(need==3){
+                        printf("hi tempp[%d]%d\n",j,tempp[j]);
+                    }
+
+                }
+                //
+                int count=0;
+                for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                    if(tempp[j]==-1){
+                    }
+                    else{
+                        count++;
+                    }
+                }
+                //LFU
+                if(count==1){//LFU
+                    printf("need11:%d\n",need);
+                    for(int i=tempp[0]-1;i>-1;i--){
+                        mem[0][i+1]=mem[0][i];
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                    }
+                    mem[0][0]=need;               
+                    mem[1][0]=0;
+                    mem[2][0]=time;
+                } 
+
+
+
+                //LFU 
+
+                ///////
+
+                //LRU
+                else{//LRU  把temp中最後一個數字當作取代目標
+                    printf("\n");
+                    printf("now LRU,need=%d\n",need);
+                    for(int i=0;i<pageframe;i++){
+                        printf("tempp[%d]:%d \n",i,tempp[i]);
+                    }
+                    int rp_idx;
+                    for(int i=pageframe-1;i>-1;i--){
+                        if(tempp[i]!=-1){
+                            rp_idx=tempp[i];
+                            break;
+                        }
+                    }
+                    printf("rp_idx=%d\n",rp_idx);
+                        //                     if(mem[1][0]==7)
+                        // {printf(" ");}ok!
+                        if(mem[1][0]==7)
+                        {printf(" ");}//ok!
+                    for(int i=rp_idx-1;i>-1;i--){//往後挪 test123
+                        
+                        mem[0][i+1]=mem[0][i];
+
+                        if(mem[1][0]==7)
+                        {printf(" ");}
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                        if(mem[1][i+1]==7)
+                        {printf(" ");}
+                    }
+                    mem[0][0]=need;
+                    mem[1][0]=0;
+                    mem[2][0]=time;                  
+                }
+            }
+            else{//mem有空位
+                for(int i=0;i<pageframe;i++){
+                    int temp = mem[0][i];
+                    if(temp==-1){//找到空位
+                        for(int j=pageframe-2;j>-1;j--){
+                            mem[0][j+1]=mem[0][j];
+                            mem[1][j+1]=mem[1][j];
+                            mem[2][j+1]=mem[2][j];
+                        }
+                        mem[0][0]=need;
+                        mem[1][0]=0;
+                        mem[2][0]=time;
+                        //printf("need=%d,mem:%d %d %d",need ,mem[0][0],mem[0][1],mem[0][2]);
+                        break;
+                    } 
+                }            
+
+            }
+
+            for(int i=0;i<pageframe;i++){
+                if(mem[1][i]==7){////test
+                    break;
+                }
+
+            }
+           
+
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){////test
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\t");
+            fprintf(outputFile, "F\n");
+
+        }
+
+    }
+    fprintf(outputFile, "Page Fault = %d  Page Replaces = %d  Page Frames = %d\n",pf_count,pr_count,pageframe);
+    fclose(outputFile);
+}
+
+int  task6(Page *pages, int pagecount,int pageframe,const char* fileName,int norepeat_page_count,int task){
+    char outputFilePath[1024];
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw3/hw3_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    task1_(pages, pagecount,pageframe,fileName,norepeat_page_count,outputFile);
+    fprintf(outputFile, "\n");
+    task2_(pages, pagecount,pageframe,fileName,norepeat_page_count,outputFile);
+    fprintf(outputFile, "\n");
+    task3_(pages, pagecount,pageframe,fileName,norepeat_page_count,outputFile);
+    fprintf(outputFile, "\n");
+    task4_(pages, pagecount,pageframe,fileName,norepeat_page_count,outputFile);
+    fprintf(outputFile, "\n");
+    task5_(pages, pagecount,pageframe,fileName,norepeat_page_count,outputFile);
+    
+}
+
+int  task5(Page *pages, int pagecount,int pageframe,const char* fileName,int norepeat_page_count,int task){
+    //pageframe:代表mem可以放幾個page
+    //pagecount:共要求page多少次
+    int mem[3][pageframe];
+    int pf_count=0,pr_count=0,mem_count=0;//mem_count 紀錄目前有多少page曾經進入mem，以判斷有沒有page replace發生
+    for(int i=0;i<pageframe;i++){
+        mem[0][i]=-1;//page ID
+        mem[1][i]=0;//Page used frequency使用頻率
+        mem[2][i]=-1;//page進入mem時間
+    }
+    int time=-1;
+    //建立輸出檔案
+    char outputFilePath[1024];
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw3/hw3_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    fprintf(outputFile, "--------------Least Frequently Used LRU Page Replacement-----------------------\n");
+
+
+    while(time < pagecount-1){
+        time++;
+        int temp3;//紀錄mem裡是哪個和目前要插入的資料重複了
+        int need=page[time];//當前要求的page id
+        fprintf(outputFile, "%d\t",need);
+        int pf=1;//pf=1 發生page fault ; pf=0 沒發生page fault
+        for(int i=0;i<pageframe;i++){//確認mem中有沒有該page
+            if(mem[0][i]==need){
+                pf=0;
+                temp3=i;//紀錄mem裡是哪個和目前要插入的資料重複了
+                break;
+            }
+        }
+        if(pf==0){//pf=0 沒發生page fault
+            mem[1][temp3]++;//記錄他的使用頻率
+            int a,b,c;
+            a=mem[0][temp3];
+            b=mem[1][temp3];
+            c=mem[2][temp3];
+            for(int i=temp3-1;i>-1;i--){
+                mem[0][i+1]=mem[0][i];
+                mem[1][i+1]=mem[1][i];
+                mem[2][i+1]=mem[2][i];
+            }
+            mem[0][0]=a;
+            mem[1][0]=b;
+            mem[2][0]=c;
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\n");
+        }
+        else{//pf==1發生page fault 
+            pf_count++;
+            if (mem_count>=pageframe){//判斷是否有交換
+                pr_count++;
+            }
+            mem_count++;    
+
+            //LFU
+            if(mem_count>pageframe){//mem沒有空位
+                int check=0;//check=0,LFU成功  ;  check=1,要搭配FIFO
+                int tempp[pageframe];//紀錄最小使用頻率的page有多少個page和他相同(紀錄page 在mem id)
+                for(int i=0;i<pageframe;i++){
+                    tempp[i]=-1;
+                }
+                //判斷執行LFU或是FIFO
+                int min_uf;//最小使用頻率
+                min_uf=100;
+                int temp=0;//紀錄tempp[]中哪個索引開始是空的,也可以用來判斷tempp[]中有多少個資料，代表有多少最小的使用頻率重複
+                for(int i=0;i<pageframe;i++){
+                    if(need==3){
+                        printf("aaaaa i:%d  mem[0][i]:%d  mem[1][i]:%d\n",i,mem[0][i],mem[1][i]);
+                    }
+
+                    if(min_uf==mem[1][i]){
+                        for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                            if(tempp[j]==-1){
+                                temp=j;
+                                break;
+                            }
+                        }
+                        tempp[temp]=i;                       
+                    }
+                    else if (min_uf>mem[1][i]){//找到更小的mem
+                        printf("找到更小的mem uf,need:%d  mem[0][i];%d",need,mem[0][i]);
+                        for(int j=0;j<pageframe;j++){//重置 tempp[]
+                            tempp[j]=-1;
+                        }
+                        min_uf=mem[1][i];
+                        tempp[0]=i;
+                        if(need==3){
+                            printf("min_uf%d  %d\n",min_uf,tempp[0]);
+                        }
+                        //temp=0;//重置temp       
+                    }
+                    
+                }
+                    
+                
+                for(int j=0;j<pageframe;j++){
+                    if(need==3){
+                        printf("hi tempp[%d]%d\n",j,tempp[j]);
+                    }
+
+                }
+                //
+                int count=0;
+                for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                    if(tempp[j]==-1){
+                    }
+                    else{
+                        count++;
+                    }
+                }
+                //LFU
+                if(count==1){//LFU
+                    printf("need11:%d\n",need);
+                    for(int i=tempp[0]-1;i>-1;i--){
+                        mem[0][i+1]=mem[0][i];
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                    }
+                    mem[0][0]=need;               
+                    mem[1][0]=0;
+                    mem[2][0]=time;
+                } 
+
+
+
+                //LFU 
+
+                ///////
+
+                //LRU
+                else{//LRU  把temp中最後一個數字當作取代目標
+                    printf("\n");
+                    printf("now LRU,need=%d\n",need);
+                    for(int i=0;i<pageframe;i++){
+                        printf("tempp[%d]:%d \n",i,tempp[i]);
+                    }
+                    int rp_idx;
+                    for(int i=pageframe-1;i>-1;i--){
+                        if(tempp[i]!=-1){
+                            rp_idx=tempp[i];
+                            break;
+                        }
+                    }
+                    printf("rp_idx=%d\n",rp_idx);
+                        //                     if(mem[1][0]==7)
+                        // {printf(" ");}ok!
+                        if(mem[1][0]==7)
+                        {printf(" ");}//ok!
+                    for(int i=rp_idx-1;i>-1;i--){//往後挪 test123
+                        
+                        mem[0][i+1]=mem[0][i];
+
+                        if(mem[1][0]==7)
+                        {printf(" ");}
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                        if(mem[1][i+1]==7)
+                        {printf(" ");}
+                    }
+                    mem[0][0]=need;
+                    mem[1][0]=0;
+                    mem[2][0]=time;                  
+                }
+            }
+            else{//mem有空位
+                for(int i=0;i<pageframe;i++){
+                    int temp = mem[0][i];
+                    if(temp==-1){//找到空位
+                        for(int j=pageframe-2;j>-1;j--){
+                            mem[0][j+1]=mem[0][j];
+                            mem[1][j+1]=mem[1][j];
+                            mem[2][j+1]=mem[2][j];
+                        }
+                        mem[0][0]=need;
+                        mem[1][0]=0;
+                        mem[2][0]=time;
+                        //printf("need=%d,mem:%d %d %d",need ,mem[0][0],mem[0][1],mem[0][2]);
+                        break;
+                    } 
+                }            
+
+            }
+
+            for(int i=0;i<pageframe;i++){
+                if(mem[1][i]==7){////test
+                    break;
+                }
+
+            }
+           
+
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){////test
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\t");
+            fprintf(outputFile, "F\n");
+
+        }
+
+    }
+    fprintf(outputFile, "Page Fault = %d  Page Replaces = %d  Page Frames = %d\n",pf_count,pr_count,pageframe);
+    fclose(outputFile);
+}
+int  task4(Page *pages, int pagecount,int pageframe,const char* fileName,int norepeat_page_count,int task){
+    //pageframe:代表mem可以放幾個page
+    //pagecount:共要求page多少次
+    int mem[3][pageframe];
+    int pf_count=0,pr_count=0,mem_count=0;//mem_count 紀錄目前有多少page曾經進入mem，以判斷有沒有page replace發生
+    for(int i=0;i<pageframe;i++){
+        mem[0][i]=-1;//page ID
+        mem[1][i]=0;//Page used frequency使用頻率
+        mem[2][i]=-1;//page進入mem時間
+    }
+    int time=-1;
+    //建立輸出檔案
+    char outputFilePath[1024];
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw3/hw3_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    fprintf(outputFile, "--------------Most Frequently Used Page Replacement -----------------------\n");
+
+
+    while(time < pagecount-1){
+        time++;
+        int need=page[time];//當前要求的page id
+        fprintf(outputFile, "%d\t",need);
+        int pf=1;//pf=1 發生page fault ; pf=0 沒發生page fault
+        int temp3;//紀錄mem裡是哪個和目前要插入的資料重複了
+        for(int i=0;i<pageframe;i++){//確認mem中有沒有該page
+            if(mem[0][i]==need){
+                pf=0;
+                temp3=i;//紀錄mem裡是哪個和目前要插入的資料重複了
+                break;
+            }
+        }
+        if(pf==0){//pf=0 沒發生page fault
+            mem[1][temp3]++;//記錄他的使用頻率
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\n");
+        }
+        else{//pf==1發生page fault 
+            pf_count++;
+            if (mem_count>=pageframe){//判斷是否有交換
+                pr_count++;
+            }
+            mem_count++;
+
+            //LFU
+            if(mem_count>pageframe){//mem沒有空位
+                int check=0;//check=0,MFU成功  ;  check=1,要搭配FIFO
+                int tempp[pageframe];//紀錄最小使用頻率的page有多少個page和他相同(紀錄page 在mem id)
+                for(int i=0;i<pageframe;i++){
+                    tempp[i]=-1;
+                }
+                //判斷執行MFU或是FIFO
+                int max_uf;//最小使用頻率
+                max_uf=-1;
+                int temp=0;//紀錄tempp[]中哪個索引開始是空的,也可以用來判斷tempp[]中有多少個資料，代表有多少最小的使用頻率重複
+                for(int i=0;i<pageframe;i++){
+                    // printf("hi\n");
+                    if(max_uf==mem[1][i]){
+                        for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                            if(tempp[j]==-1){
+                                temp=j;
+                                break;
+                            }
+                        }
+                        tempp[temp]=i;                       
+                    }
+                    else if (max_uf<mem[1][i]){//找到更小的mem
+                        // printf("找到更小的mem uf,need:%d  mem[0][i];%d",need,mem[0][i]);
+                        for(int j=0;j<pageframe;j++){//重置 tempp[]
+                            tempp[j]=-1;
+                        }
+                        max_uf=mem[1][i];
+                        tempp[0]=i;   
+                        //temp=0;//重置temp       
+                    }
+                    
+                }
+                //
+                int count=0;
+                for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                    if(tempp[j]==-1){
+                        //printf("%d ",tempp[j]);
+                        break;
+                    }
+                    else{
+                        count++;
+                        //printf("%d ",tempp[j]);
+                    }
+                }
+                //LFU
+                if(count==1){//MFU
+                printf("need:%d\n",need);
+                    for(int i=tempp[0]-1;i>-1;i--){
+                        mem[0][i+1]=mem[0][i];
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                    }
+                    mem[0][0]=need;               
+                    mem[1][0]=0;
+                    mem[2][0]=time;
+                } 
+
+
+
+                //LFU 
+
+                ///////
+
+                //FIFO
+                else{//FIFO  只比較tempp[]中的page誰的抵達時間比較小
+                    printf("now fifo,need=%d\n",need);
+                    for(int i=0;i<pageframe;i++){
+                        printf("tempp[%d]:%d \n",i,tempp[i]);
+                    }
+                    int min_inside_time=1000;
+                    int min_inside_time_idx=1000;
+                    int mem_idx;
+                    for(int i=0;i<pageframe;i++){
+                        if(tempp[i]==-1){
+                            break;
+                        }
+                        //printf("mem_idx %d \n",tempp[i]);
+                        if(min_inside_time>mem[2][tempp[i]]){
+                            min_inside_time=mem[2][tempp[i]];
+                            min_inside_time_idx=tempp[i];
+                        }
+                    }
+                    printf("min inside time=%d\n",min_inside_time);
+                    printf("min inside time idx=%d\n",min_inside_time_idx);
+
+                    for(int i=min_inside_time_idx-1;i>-1;i--){//往後挪
+                        mem[0][i+1]=mem[0][i];
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                    }
+                    mem[0][0]=need;
+                    mem[1][0]=0;
+                    mem[2][0]=time;                    
+                }
+
+                
+                // for(int i=0;i<pageframe;i++){
+                //     if(mem[0][i]==-1){
+                //         break;
+                //     }
+                //     fprintf(outputFile, "%d",mem[0][i]);
+                // }
+                // fprintf(outputFile, "\t");
+                // fprintf(outputFile, "F\n");
+            }
+            else{//mem有空位
+                for(int i=0;i<pageframe;i++){
+                    int temp = mem[0][i];
+                    if(temp==-1){//找到空位
+                        for(int j=pageframe-2;j>-1;j--){
+                            mem[0][j+1]=mem[0][j];
+                            mem[1][j+1]=mem[1][j];
+                            mem[2][j+1]=mem[2][j];
+                        }
+                        mem[0][0]=need;
+                        mem[1][0]=0;
+                        mem[2][0]=time;
+                        //printf("need=%d,mem:%d %d %d",need ,mem[0][0],mem[0][1],mem[0][2]);
+                        break;
+                    } 
+                }            
+
+            }
+
+
+           
+
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){////test
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\t");
+            fprintf(outputFile, "F\n");
+        }
+
+    }
+    fprintf(outputFile, "Page Fault = %d  Page Replaces = %d  Page Frames = %d\n",pf_count,pr_count,pageframe);
+
+
+    fclose(outputFile);
+
+}
+int  task3(Page *pages, int pagecount,int pageframe,const char* fileName,int norepeat_page_count,int task){
+    //pageframe:代表mem可以放幾個page
+    //pagecount:共要求page多少次
+    int mem[3][pageframe];
+    int pf_count=0,pr_count=0,mem_count=0;//mem_count 紀錄目前有多少page曾經進入mem，以判斷有沒有page replace發生
+    for(int i=0;i<pageframe;i++){
+        mem[0][i]=-1;//page ID
+        mem[1][i]=0;//Page used frequency使用頻率
+        mem[2][i]=-1;//page進入mem時間
+    }
+    int time=-1;
+    //建立輸出檔案
+
+    char outputFilePath[1024];
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw3/hw3_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    fprintf(outputFile, "--------------Least Frequently Used Page Replacement-----------------------\n");
+
+
+
+    while(time < pagecount-1){
+        time++;
+        int need=page[time];//當前要求的page id
+        fprintf(outputFile, "%d\t",need);
+        int pf=1;//pf=1 發生page fault ; pf=0 沒發生page fault
+        int temp3;//紀錄mem裡是哪個和目前要插入的資料重複了
+        for(int i=0;i<pageframe;i++){//確認mem中有沒有該page
+            if(mem[0][i]==need){
+                pf=0;
+                temp3=i;//紀錄mem裡是哪個和目前要插入的資料重複了
+                break;
+            }
+        }
+        if(pf==0){//pf=0 沒發生page fault
+            mem[1][temp3]++;//記錄他的使用頻率
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\n");
+        }
+        else{//pf==1發生page fault 
+            pf_count++;
+            if (mem_count>=pageframe){//判斷是否有交換
+                pr_count++;
+            }
+            mem_count++;
+
+            //LFU
+            if(mem_count>pageframe){//mem沒有空位
+                int check=0;//check=0,LFU成功  ;  check=1,要搭配FIFO
+                int tempp[pageframe];//紀錄最小使用頻率的page有多少個page和他相同(紀錄page 在mem id)
+                for(int i=0;i<pageframe;i++){
+                    tempp[i]=-1;
+                }
+                //判斷執行LFU或是FIFO
+                int min_uf;//最小使用頻率
+                min_uf=100;
+                int temp=0;//紀錄tempp[]中哪個索引開始是空的,也可以用來判斷tempp[]中有多少個資料，代表有多少最小的使用頻率重複
+                for(int i=0;i<pageframe;i++){
+                    // printf("hi\n");
+                    if(min_uf==mem[1][i]){
+                        for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                            if(tempp[j]==-1){
+                                temp=j;
+                                break;
+                            }
+                        }
+                        tempp[temp]=i;                       
+                    }
+                    else if (min_uf>mem[1][i]){//找到更小的mem
+                        // printf("找到更小的mem uf,need:%d  mem[0][i];%d",need,mem[0][i]);
+                        for(int j=0;j<pageframe;j++){//重置 tempp[]
+                            tempp[j]=-1;
+                        }
+                        min_uf=mem[1][i];
+                        tempp[0]=i;   
+                        //temp=0;//重置temp       
+                    }
+                    
+                }
+                //
+                int count=0;
+                for(int j=0;j<pageframe;j++){//find tempp[]中哪個索引開始是空的
+                    if(tempp[j]==-1){
+                        //printf("%d ",tempp[j]);
+                        break;
+                    }
+                    else{
+                        count++;
+                        //printf("%d ",tempp[j]);
+                    }
+                }
+                //LFU
+                if(count==1){//LFU
+                printf("need:%d\n",need);
+                    for(int i=tempp[0]-1;i>-1;i--){
+                        mem[0][i+1]=mem[0][i];
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                    }
+                    mem[0][0]=need;               
+                    mem[1][0]=0;
+                    mem[2][0]=time;
+                } 
+
+
+
+                //LFU 
+
+                ///////
+
+                //FIFO
+                else{//FIFO  只比較tempp[]中的page誰的抵達時間比較小
+                    printf("now fifo,need=%d\n",need);
+                    for(int i=0;i<pageframe;i++){
+                        printf("tempp[%d]:%d \n",i,tempp[i]);
+                    }
+                    int min_inside_time=1000;
+                    int min_inside_time_idx=1000;
+                    int mem_idx;
+                    for(int i=0;i<pageframe;i++){
+                        if(tempp[i]==-1){
+                            break;
+                        }
+                        //printf("mem_idx %d \n",tempp[i]);
+                        if(min_inside_time>mem[2][tempp[i]]){
+                            min_inside_time=mem[2][tempp[i]];
+                            min_inside_time_idx=tempp[i];
+                        }
+                    }
+                    printf("min inside time=%d\n",min_inside_time);
+                    printf("min inside time idx=%d\n",min_inside_time_idx);
+
+                    for(int i=min_inside_time_idx-1;i>-1;i--){//往後挪
+                        mem[0][i+1]=mem[0][i];
+                        mem[1][i+1]=mem[1][i];
+                        mem[2][i+1]=mem[2][i];
+                    }
+                    mem[0][0]=need;
+                    mem[1][0]=0;
+                    mem[2][0]=time;                    
+                }
+
+                
+                // for(int i=0;i<pageframe;i++){
+                //     if(mem[0][i]==-1){
+                //         break;
+                //     }
+                //     fprintf(outputFile, "%d",mem[0][i]);
+                // }
+                // fprintf(outputFile, "\t");
+                // fprintf(outputFile, "F\n");
+            }
+            else{//mem有空位
+                for(int i=0;i<pageframe;i++){
+                    int temp = mem[0][i];
+                    if(temp==-1){//找到空位
+                        for(int j=pageframe-2;j>-1;j--){
+                            mem[0][j+1]=mem[0][j];
+                            mem[1][j+1]=mem[1][j];
+                            mem[2][j+1]=mem[2][j];
+                        }
+                        mem[0][0]=need;
+                        mem[1][0]=0;
+                        mem[2][0]=time;
+                        //printf("need=%d,mem:%d %d %d",need ,mem[0][0],mem[0][1],mem[0][2]);
+                        break;
+                    } 
+                }            
+
+            }
+
+
+           
+
+            for(int i=0;i<pageframe;i++){
+                if(mem[0][i]==-1){////test
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[0][i]);
+            }
+            fprintf(outputFile, "\t");
+            fprintf(outputFile, "F\n");
+        }
+
+    }
+    fprintf(outputFile, "Page Fault = %d  Page Replaces = %d  Page Frames = %d\n",pf_count,pr_count,pageframe);
+
+    fclose(outputFile);
+
+}
+int  task2(Page *pages, int pagecount,int pageframe,const char* fileName,int norepeat_page_count,int task){
+    //pageframe:代表mem可以放幾個page
+    //pagecount:共要求page多少次
+    //解法就是:不管有沒有pf的發生，就直接把新進的page放前面，其他往後移
+    int mem[pageframe];
+    int pf_count=0,pr_count=0,mem_count=0;//mem_count 紀錄目前有多少page曾經進入mem，以判斷有沒有page replace發生
+    for(int i=0;i<pageframe;i++){
+        mem[i]=-1;
+    }
+    int time=-1;
+    //建立輸出檔案
+
+    char outputFilePath[1024];
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw3/hw3_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    fprintf(outputFile, "--------------LRU-----------------------\n");
+
+
+
+
+    while(time < pagecount-1){
+        time++;
+        int need=page[time];//當前要求的page id
+        fprintf(outputFile, "%d\t",need);
+        int pf=1;//pf=1 發生page fault ; pf=0 沒發生page fault
+        int temp3;//紀錄mem裡是哪個和目前要插入的資料重複了
+        for(int i=0;i<pageframe;i++){//確認mem中有沒有該page
+            if(mem[i]==need){
+                pf=0;
+                temp3=i;//紀錄mem裡是哪個和目前要插入的資料重複了
+                break;
+            }
+        }
+        if(pf==0){//pf=0 沒發生page fault
+            for(int i=temp3-1;i>-1;i--){
+                mem[i+1]=mem[i];
+            }
+            mem[0]=need;
+            for(int i=0;i<pageframe;i++){
+                if(mem[i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[i]);
+            }
+            fprintf(outputFile, "\n");
+        }
+        else{//pf==1發生page fault 
+            pf_count++;
+            if (mem_count>=pageframe){//判斷是否有交換
+                pr_count++;
+            }
+            for(int i=pageframe-1;i>-1;i--){
+                mem[i+1]=mem[i];
+            }
+            mem[0]=need;
+            mem_count++;
+            for(int i=0;i<pageframe;i++){
+                if(mem[i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[i]);
+            }
+            fprintf(outputFile, "\t");
+            fprintf(outputFile, "F\n");
+        }
+
+    }
+    fprintf(outputFile, "Page Fault = %d  Page Replaces = %d  Page Frames = %d\n",pf_count,pr_count,pageframe);
+
+    fclose(outputFile);
+
+}
+
+int  task1(Page *pages, int pagecount,int pageframe,const char* fileName,int norepeat_page_count,int task){
+    //pageframe:代表mem可以放幾個page
+    //pagecount:共要求page多少次
+    int mem[pageframe];
+    int pf_count=0,pr_count=0,mem_count=0;//mem_count 紀錄目前有多少page曾經進入mem，以判斷有沒有page replace發生
+    for(int i=0;i<pageframe;i++){
+        mem[i]=-1;
+    }
+    int time=-1;
+    //建立輸出檔案
+    char outputFilePath[1024];
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw3/hw3_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    fprintf(outputFile, "--------------FIFO-----------------------\n");
+
+
+    while(time < pagecount-1){
+        time++;
+        int need=page[time];//當前要求的page id
+        fprintf(outputFile, "%d\t",need);
+        int pf=1;//pf=1 發生page fault ; pf=0 沒發生page fault
+        for(int i=0;i<pageframe;i++){//確認mem中有沒有該page
+            if(mem[i]==need){
+                pf=0;
+                break;
+            }
+        }
+        if(pf==0){//pf=0 沒發生page fault
+            for(int i=0;i<pageframe;i++){
+                if(mem[i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[i]);
+            }
+            fprintf(outputFile, "\n");
+        }
+        else{//pf==1發生page fault 
+            pf_count++;
+            if (mem_count>=pageframe){//判斷是否有交換
+                pr_count++;
+            }
+            
+            fifo(need,norepeat_page_count, mem,pageframe,pages);//回傳mem,pages中的idx
+            mem[replace_mem_idx]=need;
+            //找要進入的資料的pageidx，並且修改進入時間
+            int idx=mem_idx_to_pages_idx(mem, pageframe, need, norepeat_page_count,pages);
+            pages[idx].inside_time=time;
+            mem_count++;
+            for(int i=0;i<pageframe;i++){
+                if(mem[i]==-1){
+                    break;
+                }
+                fprintf(outputFile, "%d",mem[i]);
+            }
+            fprintf(outputFile, "\t");
+            fprintf(outputFile, "F\n");
+        }
+
+    }
+    fprintf(outputFile, "Page Fault = %d  Page Replaces = %d  Page Frames = %d\n",pf_count,pr_count,pageframe);
+
+    fclose(outputFile);
+
+    
+}
+
+//find the filename in the filepath
+const char* getFileNameWithoutExtension(const char* path) {
+    const char* lastSlash = strrchr(path, '/'); // 找到最後一個斜線的位置
+    const char* fileName = lastSlash ? lastSlash + 1 : path;
+
+    static char fileNameWithoutExtension[256]; // 儲存無擴展名的檔案名
+    strcpy(fileNameWithoutExtension, fileName); // 複製檔案名到新的變數
+
+    char* lastDot = strrchr(fileNameWithoutExtension, '.'); // 找到檔案名中最後一個點的位置
+    if (lastDot != NULL) {
+        *lastDot = '\0'; // 將最後一個點之後的部分刪除，移除擴展名
+    }
+    return fileNameWithoutExtension;
+}
+
+int main() {
+    char filepath[1024];
+    int task, pageframe;
+    int index=0;
+    printf("請輸入檔案名稱: ");
+    scanf("%1023s", filepath);  // 限制輸入長度，避免緩衝區溢出
+    const char* fileName = getFileNameWithoutExtension(filepath);
+    printf("檔案名稱是:%s \n",fileName);
+    // 嘗試打開檔案
+    FILE *file = fopen(filepath, "r");  // "r" 模式表示只讀
+    if (file == NULL) {
+        perror("打開檔案失敗");  // 如果無法打開檔案，輸出錯誤原因
+        return 1;  // 非正常結束程序
+    }
+    int i=0;
+    // 讀取檔案內容
+    char line[2048];
+    fgets(line, sizeof(line), file);
+    sscanf(line, "%d %d", &task, & pageframe);
+    printf("執行任務:%d pageframe:%d\n" ,task, pageframe);
+    //fgets(line, sizeof(line), file);
+    // 讀取包含數字的下一行
+    fgets(line, sizeof(line), file);  // 假設這一行是數字串123412512345
+    // 將每個字符轉換為整數並存入陣列
+    while (line[i] != '\0' && line[i] != '\n' && i < 100) {
+        if (line[i] >= '0' && line[i] <= '9') {
+            page[i] = line[i] - '0';
+            printf("%d ", page[i]);  // 輸出每個數字以確認
+        }
+        i++;
+    }
+    printf("\n");
+    const int pagecount=i-1;
+    Page *pages = malloc(pagecount * sizeof(Page)); 
+    for(int i=0;i<pagecount;i++){
+        pages[i].pageID=-1;
+        pages[i].inside_time=100;
+    }
+    int k=0;//紀錄pages結構的index
+    for(int i=0;i<pagecount;i++){
+        int already_access=0;//判斷是否已經儲存進Page結構中
+        for(int j=0;j<pagecount;j++){
+            if(pages[j].pageID==page[i]){
+                already_access=1;
+                break;
+            }
+        }
+        if(already_access){
+            // do no op
+        }
+        else{
+            pages[k].pageID = page[i];
+            k++;
+        }  
+    }
+    const int norepeat_page_count=k;
+
+    for(int j=0;j<norepeat_page_count;j++){
+        printf("%d\n",pages[j].pageID);
+    }
+
+    switch(task){
+        case 1:
+            task1(pages, pagecount,pageframe,fileName,norepeat_page_count,task);
+            break;
+        case 2:
+            task2(pages, pagecount,pageframe,fileName,norepeat_page_count,task);
+            break;        
+        case 3:
+            task3(pages, pagecount,pageframe,fileName,norepeat_page_count,task);
+            break;
+        case 4:
+            task4(pages, pagecount,pageframe,fileName,norepeat_page_count,task);
+            break;
+        case 5:
+            task5(pages, pagecount,pageframe,fileName,norepeat_page_count,task);
+            break;
+        case 6:
+            task6(pages, pagecount,pageframe,fileName,norepeat_page_count,task);
+            break;
+    }
+    // 關閉檔案
+    fclose(file);
+    free (pages);
+    return 0;  // 程序正常結束
+}
