@@ -1,0 +1,2121 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h> // 引入sleep的標頭檔
+typedef struct {
+    int processID;
+    int cpuBurst;
+    int arrivalTime;
+    int priority;
+} Process;
+typedef struct {
+    int **sort; 
+    int processesCount;
+} SortData;
+static SortData sortData;
+typedef struct {
+    int **queue;
+    int processesCount;
+    int old_priority;
+    int current_time;
+} QueueData;
+static QueueData queueData;
+typedef struct {//for task6
+    int **rr_queue;
+    int processesCount;
+    int old_priority;
+    int current_time;
+} RR_QueueData;
+static RR_QueueData rr_queueData;
+int compare_processID(const void *a, const void *b) {
+    int indexA = *(int *)a;
+    int indexB = *(int *)b;
+    return sortData.sort[0][indexA] - sortData.sort[0][indexB];
+}
+int compare_arrivaltime_PID(const void *a, const void *b) {
+    int indexA = *(int *)a;
+    int indexB = *(int *)b;
+    if (sortData.sort[1][indexA] != sortData.sort[1][indexB])
+        return sortData.sort[1][indexA] - sortData.sort[1][indexB];
+    return sortData.sort[0][indexA] - sortData.sort[0][indexB];
+}
+int compare_after_priority_lastworktime(const void *a, const void *b) {
+    int indexA = *(int *)a;
+    int indexB = *(int *)b;
+    // 主要按第二列（到達时间）排序
+    //因為選process依賴lastworktime，且因為尚未執行的process lastworktime=0，影響結果,強迫執行一次
+    if(rr_queueData.rr_queue[5][indexA]!=0  && rr_queueData.rr_queue[5][indexB]==0 && rr_queueData.rr_queue[8][indexB]==0){
+        rr_queueData.rr_queue[7][indexB]++;
+        return rr_queueData.rr_queue[2][indexA] - rr_queueData.rr_queue[5][indexB];
+    }///////////////////////////////////
+    if(rr_queueData.rr_queue[5][indexB]!=0  && rr_queueData.rr_queue[5][indexA]==0&&rr_queueData.rr_queue[8][indexA]==0){
+        rr_queueData.rr_queue[7][indexA]++;
+        return rr_queueData.rr_queue[2][indexB] - rr_queueData.rr_queue[5][indexA];
+    }
+    if (rr_queueData.rr_queue[5][indexA] != rr_queueData.rr_queue[5][indexB])
+        return rr_queueData.rr_queue[5][indexA] - rr_queueData.rr_queue[5][indexB];
+    // 如果第二列相等，不動作
+    return 0;
+}
+int compare_priority_arrivaltime_PID(const void *a, const void *b) {
+    int indexA = *(int *)a;
+    int indexB = *(int *)b;
+    
+    if (queueData.queue[3][indexA] != queueData.queue[3][indexB] ) {
+        return queueData.queue[3][indexA] - queueData.queue[3][indexB];  
+    } 
+    else if(queueData.queue[2][indexA] != queueData.queue[2][indexB]){
+        return queueData.queue[2][indexA] - queueData.queue[2][indexB];
+    }
+    return queueData.queue[0][indexA] - queueData.queue[0][indexB];
+}
+int compare_ResponseRatio_arrivaltime_PID(const void *a, const void *b) {
+    int indexA = *(int *)a;
+    int indexB = *(int *)b;
+    //等待時間=目前時間-到達時間-已經運行的時間
+    int waiting_time_A=queueData.current_time-queueData.queue[2][indexA]-(queueData.queue[3][indexA]-queueData.queue[1][indexA]);
+    int waiting_time_B=queueData.current_time-queueData.queue[2][indexB]-(queueData.queue[3][indexB]-queueData.queue[1][indexB]);
+    double response_ratio_A = (double)(waiting_time_A + queueData.queue[3][indexA]) / queueData.queue[3][indexA];
+    double response_ratio_B = (double)(waiting_time_B + queueData.queue[3][indexB]) / queueData.queue[3][indexB];
+    
+    if (queueData.queue[1][indexA] > 10000 && queueData.queue[1][indexB] > 10000) {
+        return 0;  
+    } 
+    else if (queueData.queue[1][indexA] > 10000) {
+        return 1;  
+    } 
+    else if (queueData.queue[1][indexB] > 10000) {
+        return -1; 
+    }
+    else if (response_ratio_A > response_ratio_B) return -1;
+    else if (response_ratio_A < response_ratio_B) return 1;
+    else if(queueData.queue[2][indexA] != queueData.queue[2][indexB]){
+        return queueData.queue[2][indexA] - queueData.queue[2][indexB];
+    }
+    return queueData.queue[0][indexA] - queueData.queue[0][indexB];
+}
+int compare_remaintime_arrival_PID(const void *a, const void *b) {
+    int indexA = *(int *)a;
+    int indexB = *(int *)b;
+    if (queueData.queue[1][indexA] != queueData.queue[1][indexB])
+        return queueData.queue[1][indexA] - queueData.queue[1][indexB];
+    else if(queueData.queue[2][indexA] != queueData.queue[2][indexB]){
+        return queueData.queue[2][indexA] - queueData.queue[2][indexB];
+    }
+    return queueData.queue[0][indexA] - queueData.queue[0][indexB];
+}
+char numberToChar(int num) {
+    if (num < 10) {
+        return '0' + num;  // 將0-9數字轉換為字符
+    } else {
+        return 'A' + (num - 10);  // 將10及以上的數字轉換為英文字母，A對應10，B對應11，依此類推
+    }
+}
+void calculate_times_SRTF(int **sort, int processesCount, FILE *outputFile) {
+    fprintf(outputFile, "Waiting Time\nID\tSRTF\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx] - sort[3][idx]); // Waiting Time
+    }
+    fprintf(outputFile, "===========================================================\n\nTurnaround Time\nID\tSRTF\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx]); // Turnaround Time
+    }
+    fprintf(outputFile, "===========================================================\n");
+    free(processID_indices);
+}
+void calculate_times_HRRN(int **sort, int processesCount, FILE *outputFile) {
+    fprintf(outputFile, "Waiting Time\nID\tHRRN\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx] - sort[3][idx]); // Waiting Time
+    }
+    fprintf(outputFile, "===========================================================\n\nTurnaround Time\nID\tHRRN\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx]); // Turnaround Time
+    }
+    fprintf(outputFile, "===========================================================\n");
+    free(processID_indices);
+}
+void calculate_times_PPRR(int **sort, int processesCount, FILE *outputFile) {
+    fprintf(outputFile, "Waiting Time\nID\tPPRR\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx] - sort[3][idx]); // Waiting Time
+    }
+    fprintf(outputFile, "===========================================================\n\nTurnaround Time\nID\tPPRR\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx]); // Turnaround Time
+    }
+    fprintf(outputFile, "===========================================================\n");
+    free(processID_indices);
+}
+int indices_remaintime_TO_indices_arrivaltime(int processesCount,int **sort,int **queue,int idx,int *indices_arrivaltime){
+    for(int i=0;i<processesCount;i++){
+        int idx_arr=indices_arrivaltime[i];
+        if(sort[0][idx_arr]==queue[0][idx]){
+            return idx_arr;
+        }
+    }
+    return-1;
+}
+void calculate_times_SJF(int **sort, int processesCount, FILE *outputFile) {
+    fprintf(outputFile, "Waiting Time\nID\tSJF\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx] - sort[3][idx]); // Waiting Time
+    }
+    fprintf(outputFile, "===========================================================\n\nTurnaround Time\nID\tSJF\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx]); // Turnaround Time
+    }
+    fprintf(outputFile, "===========================================================\n");
+    free(processID_indices);
+}
+
+void calculate_times_RR(int **sort, int processesCount, int *indices, FILE *outputFile) {
+    fprintf(outputFile, "Waiting Time\nID\tRR\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx] - sort[3][idx]); // Waiting Time
+    }
+    fprintf(outputFile, "===========================================================\n\nTurnaround Time\nID\tRR\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx]); // Turnaround Time
+    }
+    fprintf(outputFile, "===========================================================\n");
+    free(processID_indices);
+}
+void calculate_times_SJF_task7(int **sort, int processesCount,FILE *outputFile,int task_store,int ***store) {
+    // fprintf(outputFile, "Waiting Time\nID\tSJF\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[2][i][0]=sort[0][idx];
+        store[2][i][1]=sort[4][idx] - sort[1][idx] - sort[3][idx];
+    //     fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx] - sort[3][idx]); // Waiting Time
+    }
+    //fprintf(outputFile, "===========================================================\n\nTurnaround Time\nID\tSJF\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[2][i][2]=sort[4][idx] - sort[1][idx];
+
+        // fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx]); // Turnaround Time
+    }
+    //fprintf(outputFile, "===========================================================\n");
+    free(processID_indices);
+}
+void calculate_times_SRTF_task7(int **sort, int processesCount,FILE *outputFile,int task_store,int ***store) {
+    // fprintf(outputFile, "Waiting Time\nID\tSJF\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[3][i][0]=sort[0][idx];
+        store[3][i][1]=sort[4][idx] - sort[1][idx] - sort[3][idx];
+    //     fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx] - sort[3][idx]); // Waiting Time
+    }
+    //fprintf(outputFile, "===========================================================\n\nTurnaround Time\nID\tSJF\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[3][i][2]=sort[4][idx] - sort[1][idx];
+
+        // fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx]); // Turnaround Time
+    }
+    //fprintf(outputFile, "===========================================================\n");
+    free(processID_indices);
+}
+void calculate_times_HRRN_task7(int **sort, int processesCount,FILE *outputFile,int task_store,int ***store) {
+    // fprintf(outputFile, "Waiting Time\nID\tSJF\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[4][i][0]=sort[0][idx];
+        store[4][i][1]=sort[4][idx] - sort[1][idx] - sort[3][idx];
+    //     fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx] - sort[3][idx]); // Waiting Time
+    }
+    //fprintf(outputFile, "===========================================================\n\nTurnaround Time\nID\tSJF\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[4][i][2]=sort[4][idx] - sort[1][idx];
+
+        // fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx]); // Turnaround Time
+    }
+    //fprintf(outputFile, "===========================================================\n");
+    free(processID_indices);
+}
+void calculate_times_PPRR_task7(int **sort, int processesCount,FILE *outputFile,int task_store,int ***store) {
+    // fprintf(outputFile, "Waiting Time\nID\tSJF\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[5][i][0]=sort[0][idx];
+        store[5][i][1]=sort[4][idx] - sort[1][idx] - sort[3][idx];
+    //     fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx] - sort[3][idx]); // Waiting Time
+    }
+    //fprintf(outputFile, "===========================================================\n\nTurnaround Time\nID\tSJF\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[5][i][2]=sort[4][idx] - sort[1][idx];
+
+        // fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx]); // Turnaround Time
+    }
+    //fprintf(outputFile, "===========================================================\n");
+    free(processID_indices);
+}
+void calculate_times_RR_task7(int **sort, int processesCount, int *indices,FILE *outputFile,int task_store,int ***store) {
+    // fprintf(outputFile, "Waiting Time\nID\tRR\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[1][i][0]=sort[0][idx];
+        store[1][i][1]=sort[4][idx] - sort[1][idx] - sort[3][idx];
+        // fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx] - sort[3][idx]); // Waiting Time
+    }
+    // fprintf(outputFile, "===========================================================\n\nTurnaround Time\nID\tRR\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[1][i][2]=sort[4][idx] - sort[1][idx];
+        // fprintf(outputFile, "%d\t%d\n", sort[0][idx], sort[4][idx] - sort[1][idx]); // Turnaround Time
+    }
+    // fprintf(outputFile, "===========================================================\n");
+    free(processID_indices);
+}
+void calculate_times(int **sort, int processesCount, int *indices,FILE *outputFile) {// task 1
+    int *waiting_time = malloc(processesCount * sizeof(int));
+    int *turnaround_time = malloc(processesCount * sizeof(int));
+    int current_time = 0;
+    for (int i = 0; i < processesCount; i++) {
+        int idx = indices[i];
+        if (current_time < sort[1][idx]) {
+            current_time = sort[1][idx]; // Process arrives and waits for CPU
+        }
+        waiting_time[idx] = current_time - sort[1][idx];
+        turnaround_time[idx] = waiting_time[idx] + sort[3][idx]; // Burst time added to waiting time
+        current_time += sort[3][idx]; // Update current time after process finishes
+    }
+    fprintf(outputFile,"Waiting Time\nID	FCFS\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int)); 
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile,"%d	%d\n",sort[0][idx],waiting_time[idx]);
+    }
+    fprintf(outputFile,"===========================================================\n\nTurnaround Time\nID	FCFS\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        fprintf(outputFile,"%d	%d\n",sort[0][idx],turnaround_time[idx]);
+    }
+    fprintf(outputFile,"===========================================================\n");
+    free(waiting_time);
+    free(turnaround_time);
+    free(processID_indices);
+}
+void calculate_times_task7(int **sort, int processesCount, int *indices,FILE *outputFile,int task_store,int ***store) {// task 1
+    int *waiting_time = malloc(processesCount * sizeof(int));
+    int *turnaround_time = malloc(processesCount * sizeof(int));
+    int current_time = 0;
+    for (int i = 0; i < processesCount; i++) {
+        int idx = indices[i];
+        if (current_time < sort[1][idx]) {
+            current_time = sort[1][idx]; // Process arrives and waits for CPU
+        }
+        waiting_time[idx] = current_time - sort[1][idx];
+        turnaround_time[idx] = waiting_time[idx] + sort[3][idx]; // Burst time added to waiting time
+        current_time += sort[3][idx]; // Update current time after process finishes
+    }
+    // fprintf(outputFile,"Waiting Time\nID	FCFS\n===========================================================\n");
+    int *processID_indices = malloc(processesCount * sizeof(int)); 
+    for (int i = 0; i < processesCount; i++) {
+        processID_indices[i] = i;
+    }
+    qsort(processID_indices, processesCount, sizeof(int), compare_processID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[task_store][i][0]=sort[0][idx];
+        store[task_store][i][1]=waiting_time[idx];
+        // fprintf(outputFile,"%d	%d\n",sort[0][idx],waiting_time[idx]);
+    }
+    // fprintf(outputFile,"===========================================================\n\nTurnaround Time\nID	FCFS\n===========================================================\n");
+    for(int i = 0; i < processesCount; i++){
+        int idx = processID_indices[i];
+        store[task_store][i][2]=turnaround_time[idx];
+        // fprintf(outputFile,"%d	%d\n",sort[0][idx],turnaround_time[idx]);
+    }
+    // fprintf(outputFile,"===========================================================\n");
+    free(waiting_time);
+    free(turnaround_time);
+    free(processID_indices);
+}
+int task1(Process *processes, int processesCount, int timeslice,const char* fileName) {
+    int **sort = malloc(4 * sizeof(int*)); 
+    for (int i = 0; i < 4; i++) {
+        sort[i] = malloc(processesCount * sizeof(int)); 
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+    }
+    sortData.sort = sort; 
+    sortData.processesCount = processesCount;
+    int *indices = malloc(processesCount * sizeof(int)); 
+    for (int i = 0; i < processesCount; i++) {
+        indices[i] = i;
+    }
+    qsort(indices, processesCount, sizeof(int), compare_arrivaltime_PID);
+    //output
+    char outputFilePath[1024];
+    // 假設桌面路徑為 '/Users/<你的用戶名稱>/Desktop/'，記得替換成你的實際路徑
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw2/hw2_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    fprintf(outputFile, "FCFS\n");
+    fprintf(outputFile, "==        FCFS==\n");
+    int current_time=0;
+    for (int i = 0; i < processesCount; i++) {
+        int idx = indices[i];
+        while(current_time<sort[1][idx]){
+            fprintf(outputFile, "-");
+            current_time++;
+        }
+        for(int j=0; j< sort[3][idx]; j++){
+            fprintf(outputFile, "%c", numberToChar(sort[0][idx]));
+            // current_time+=timeslice;
+            current_time++;
+        }    
+    }
+    fprintf(outputFile, "\n===========================================================\n\n");
+    calculate_times(sort, processesCount, indices,outputFile);
+    // 清理
+    fclose(outputFile);
+    printf("數據已經寫入 %s\n", outputFilePath);
+    for (int i = 0; i < 4; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    free(indices);
+}
+int task1_task7(Process *processes, int processesCount, int timeslice,const char* fileName, FILE * outputFile,int task_store,int ***store) {
+    int **sort = malloc(4 * sizeof(int*)); 
+    for (int i = 0; i < 4; i++) {
+        sort[i] = malloc(processesCount * sizeof(int)); 
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+    }
+    sortData.sort = sort; 
+    sortData.processesCount = processesCount;
+    task_store=0;
+    int *indices = malloc(processesCount * sizeof(int)); 
+    for (int i = 0; i < processesCount; i++) {
+        indices[i] = i;
+    }
+    qsort(indices, processesCount, sizeof(int), compare_arrivaltime_PID);
+    //output
+
+    fprintf(outputFile, "==        FCFS==\n");
+    int current_time=0;
+    for (int i = 0; i < processesCount; i++) {
+        int idx = indices[i];
+        while(current_time<sort[1][idx]){
+            fprintf(outputFile, "-");
+            current_time++;
+        }
+        for(int j=0; j< sort[3][idx]; j++){
+            fprintf(outputFile, "%c", numberToChar(sort[0][idx]));
+            // current_time+=timeslice;
+            current_time++;
+        }    
+    }
+    // fprintf(outputFile, "\n===========================================================\n\n");
+    task_store=0;
+    
+    calculate_times_task7(sort, processesCount, indices,outputFile,task_store,store);
+    // 清理
+    // fclose(outputFile);
+    // printf("數據已經寫入 %s\n", outputFilePath);
+    for (int i = 0; i < 4; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    free(indices);
+}
+int task2(Process *processes, int processesCount, int timeslice, const char* fileName) {
+    int **sort = malloc(6 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        sort[i] = malloc(processesCount * sizeof(int));
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+        sort[4][i] = 0; // 完成時間
+        sort[5][i] = 0; // 是否進入CPU
+    }
+    sortData.sort = sort;
+    sortData.processesCount = processesCount;
+    int *indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        indices[i] = i;
+    }
+    qsort(indices, processesCount, sizeof(int), compare_arrivaltime_PID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices[i];
+        printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", sort[0][idx], sort[1][idx], sort[3][idx]);
+    }
+    int current_time = 0;
+    int completed = 0;
+    int order[processesCount];
+    int queue[2048];
+    int front = 0, rear = 0;
+    int remaining_burst[processesCount];
+    int inside = 0;
+    int go_back_queue = -1; // 紀錄哪個process要回來queue
+    int back = 0; // 紀錄是否有process要回來queue
+    for(int i = 0; i < 2048; i++){
+        queue[i] = -1;
+    }
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices[i];
+        order[i] = sort[0][idx];
+        remaining_burst[i] = sort[3][idx];
+    }
+    char outputFilePath[1024];
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw2/hw2_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    fprintf(outputFile, "RR\n");
+    fprintf(outputFile, "==          RR==\n");
+    while(completed < processesCount){
+        printf("現在時間: %d\n", current_time);
+        printf("現在完成的process數量: %d\n", completed);
+        printf("front = %d\n", front);
+        printf("rear = %d\n", rear);
+        for(int i = 0; i < processesCount; i++){
+            int idx = indices[i];
+            if(sort[1][idx] <= current_time && sort[5][idx] == 0){
+                queue[rear] = sort[0][idx];
+                sort[5][idx] = 1;
+                printf("process%d 進入queue\n", queue[rear]);
+                rear++;
+                // int limittimes=current_time/timeslice;
+            }
+        }
+
+        printf("確認有沒有process進入queue之後\n");
+        printf("front = %d\n", front);
+        printf("rear = %d\n", rear);
+        if(back){
+            queue[rear] = go_back_queue;
+            printf("剛剛timeout發生，processID=%d回到queue\n", queue[rear]);
+            rear++;
+        }
+        int which = -1;
+        for(int i = 0; i < processesCount; i++){
+            if (order[i] == queue[front]){
+                which = i;
+                break;
+            }
+        }
+        back = 0;
+        if(which != -1){//確定要換
+            printf("which = %d, processID = %d\n", which, order[which]);
+            printf("正在執行processID=%c\n", numberToChar(queue[front]));
+            if(remaining_burst[which] <= timeslice){
+                printf("processID = %c結束\n", numberToChar(queue[front]));
+                for(int i=0;i<remaining_burst[which];i++){
+                    fprintf(outputFile, "%c", numberToChar(queue[front]));
+                }
+                current_time += remaining_burst[which];
+                remaining_burst[which] = 0;
+                for(int i = 0; i < processesCount; i++){
+                    int idx = indices[i];
+                    if(sort[0][idx] == queue[front]){
+                        sort[4][idx] = current_time;
+                        printf("processID%d的完成時間%d\n", sort[0][idx], sort[4][idx]);
+                        break;
+                    }
+                }
+                completed++;
+                front++;
+            } else if (front != rear){
+                for(int i=0;i<timeslice;i++){
+                    fprintf(outputFile, "%c", numberToChar(queue[front]));
+                }
+                remaining_burst[which] -= timeslice;
+                current_time += timeslice;
+                go_back_queue = order[which];
+                back = 1;
+                front++;
+            } else {//忘記在寫甚麼
+                current_time += 1;
+            }
+        } else {
+            current_time += 1;
+            fprintf(outputFile, "-");
+        }
+    }
+    fprintf(outputFile, "\n===========================================================\n");
+    calculate_times_RR(sort, processesCount, indices, outputFile);
+    for (int i = 0; i < 6; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    free(indices);
+    fclose(outputFile);
+    return 0;
+}
+int task2_task7(Process *processes, int processesCount, int timeslice, const char* fileName, FILE * outputFile,int task_store,int ***store) {
+    int **sort = malloc(6 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        sort[i] = malloc(processesCount * sizeof(int));
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+        sort[4][i] = 0; // 完成時間
+        sort[5][i] = 0; // 是否進入CPU
+    }
+    sortData.sort = sort;
+    sortData.processesCount = processesCount;
+    int *indices = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        indices[i] = i;
+    }
+    qsort(indices, processesCount, sizeof(int), compare_arrivaltime_PID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices[i];
+        printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", sort[0][idx], sort[1][idx], sort[3][idx]);
+    }
+    int current_time = 0;
+    int completed = 0;
+    int order[processesCount];
+    int queue[2048];
+    int front = 0, rear = 0;
+    int remaining_burst[processesCount];
+    int inside = 0;
+    int go_back_queue = -1; // 紀錄哪個process要回來queue
+    int back = 0; // 紀錄是否有process要回來queue
+    for(int i = 0; i < 2048; i++){
+        queue[i] = -1;
+    }
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices[i];
+        order[i] = sort[0][idx];
+        remaining_burst[i] = sort[3][idx];
+    }
+    // char outputFilePath[1024];
+    // sprintf(outputFilePath, "/media/sf_/cycu_os_hw2/hw2_output/out_%s.txt", fileName);
+    // FILE *outputFile = fopen(outputFilePath, "w");
+    // if (outputFile == NULL) {
+    //     printf("無法創建輸出檔案 %s\n", outputFilePath);
+    //     return 1;
+    // }
+    // fprintf(outputFile, "RR\n");
+    fprintf(outputFile, "\n==          RR==\n");
+    while(completed < processesCount){
+        printf("現在時間: %d\n", current_time);
+        printf("現在完成的process數量: %d\n", completed);
+        printf("front = %d\n", front);
+        printf("rear = %d\n", rear);
+        for(int i = 0; i < processesCount; i++){
+            int idx = indices[i];
+            if(sort[1][idx] <= current_time && sort[5][idx] == 0){
+                queue[rear] = sort[0][idx];
+                sort[5][idx] = 1;
+                printf("process%d 進入queue\n", queue[rear]);
+                rear++;
+                // int limittimes=current_time/timeslice;
+            }
+        }
+
+        printf("確認有沒有process進入queue之後\n");
+        printf("front = %d\n", front);
+        printf("rear = %d\n", rear);
+        if(back){
+            queue[rear] = go_back_queue;
+            printf("剛剛timeout發生，processID=%d回到queue\n", queue[rear]);
+            rear++;
+        }
+        int which = -1;
+        for(int i = 0; i < processesCount; i++){
+            if (order[i] == queue[front]){
+                which = i;
+                break;
+            }
+        }
+        back = 0;
+        if(which != -1){//確定要換
+            printf("which = %d, processID = %d\n", which, order[which]);
+            printf("正在執行processID=%c\n", numberToChar(queue[front]));
+            if(remaining_burst[which] <= timeslice){
+                printf("processID = %c結束\n", numberToChar(queue[front]));
+                for(int i=0;i<remaining_burst[which];i++){
+                    fprintf(outputFile, "%c", numberToChar(queue[front]));
+                }
+                current_time += remaining_burst[which];
+                remaining_burst[which] = 0;
+                for(int i = 0; i < processesCount; i++){
+                    int idx = indices[i];
+                    if(sort[0][idx] == queue[front]){
+                        sort[4][idx] = current_time;
+                        printf("processID%d的完成時間%d\n", sort[0][idx], sort[4][idx]);
+                        break;
+                    }
+                }
+                completed++;
+                front++;
+            } else if (front != rear){
+                for(int i=0;i<timeslice;i++){
+                    fprintf(outputFile, "%c", numberToChar(queue[front]));
+                }
+                remaining_burst[which] -= timeslice;
+                current_time += timeslice;
+                go_back_queue = order[which];
+                back = 1;
+                front++;
+            } else {//忘記在寫甚麼
+                current_time += 1;
+            }
+        } else {
+            current_time += 1;
+            fprintf(outputFile, "-");
+        }
+    }
+    // fprintf(outputFile, "\n===========================================================\n");
+    calculate_times_RR_task7(sort, processesCount, indices,outputFile,task_store,store);
+    for (int i = 0; i < 6; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    free(indices);
+    // fclose(outputFile);
+    return 0;
+}
+int task3_task7(Process *processes, int processesCount, int timeslice, const char* fileName, FILE * outputFile,int task_store,int ***store) {
+    int **sort = malloc(6 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        sort[i] = malloc(processesCount * sizeof(int));
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+        sort[4][i] = 0; // 完成時間
+        sort[5][i] = 0; // 是否進入CPU
+    }
+    sortData.sort = sort;
+    sortData.processesCount = processesCount;
+    int *indices_arrivaltime = malloc(processesCount * sizeof(int));
+    int *indices_remaintime = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        indices_arrivaltime[i] = i;
+    }
+    qsort(indices_arrivaltime, processesCount, sizeof(int), compare_arrivaltime_PID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices_arrivaltime[i];
+        printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", sort[0][idx], sort[1][idx], sort[3][idx]);
+    }
+    int current_time = 0;
+    int completed = 0;
+    int front = 0, rear = 0;
+    int inside = 0;// 紀錄多少process在queue
+    int **queue = malloc(4 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        queue[0] = malloc(processesCount * sizeof(int));//PID
+        queue[1] = malloc(processesCount * sizeof(int));//remaintime
+        queue[2] = malloc(processesCount * sizeof(int));//arrival
+        queue[3] = malloc(processesCount * sizeof(int));//cpu burst time
+    }
+    for(int i = 0; i < processesCount; i++){
+        queue[0][i] = 1000001+i;
+        queue[1][i] = 1000001+i;
+        queue[2][i] = 1000001+i;
+        queue[3][i] = 1000001+i;
+    }
+    queueData.queue = queue;
+    queueData.processesCount = processesCount;
+    fprintf(outputFile, "\n==         SJF==\n");
+    while(completed < processesCount){
+        printf("現在時間: %d\n", current_time);
+        printf("現在完成的process數量: %d\n", completed);
+        printf("inside = %d\n", inside);
+        for(int i = 0; i < processesCount; i++){ //確認有沒有process進入queue
+            int idx = indices_arrivaltime[i];
+            if(sort[1][idx] <= current_time && sort[5][idx] == 0){
+                queue[0][rear] = sort[0][idx];//pid
+                queue[1][rear] = sort[3][idx];//remain time
+                queue[2][rear] = sort[1][idx];//arrival time
+                sort[5][idx] = 1;//process進入queue
+                printf("process%d 進入queue\n", queue[0][rear]);
+                rear++;
+                inside++;//process在queue數量+1
+            }
+        }
+        printf("確認有沒有process進入queue之後\n");
+        printf("front = %d\n", front);
+        printf("rear = %d\n", rear);
+        printf("inside = %d\n", inside);
+        if(inside==0){//沒有PROCESS在QUEUE中
+            current_time++;
+            fprintf(outputFile, "-");
+        }
+        else{//有PROCESS在QUEUE中
+            for (int i = 0; i < processesCount; i++) {
+                indices_remaintime[i] = i;
+            }
+            qsort(indices_remaintime, processesCount, sizeof(int), compare_remaintime_arrival_PID);
+            for(int i = 0; i < processesCount; i++){
+                int idx = indices_remaintime[i];
+                printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", queue[0][idx], queue[2][idx], queue[1][idx]);  
+            }
+            for(int i = 0; i < processesCount; i++){//找最適合的process執行
+                int idx = indices_remaintime[i];
+                if(queue[0][idx]<1000000){
+                    for(int i=0;i<queue[1][idx];i++){
+                        fprintf(outputFile, "%c",numberToChar(queue[0][idx]));
+                    }
+                    // fprintf(outputFile, "\n");
+                    current_time=current_time+queue[1][idx];
+                    int idx_arr=indices_remaintime_TO_indices_arrivaltime(processesCount,sort,queue,idx,indices_arrivaltime);
+                    sort[4][idx_arr]=current_time;//紀錄完成時間
+                    printf("processID=%d結束,完成時間=%d\n", sort[0][idx_arr],sort[4][idx_arr]);
+                    completed++;
+                    queue[0][idx]=1000000;
+                    queue[1][idx]=1000000;
+                    queue[2][idx]=1000000;
+                    inside--;
+                    break;
+                          
+                }
+            }
+        }
+    }
+    calculate_times_SJF_task7(sort, processesCount, outputFile,task_store,store);
+    for (int i = 0; i < 6; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    for (int i = 0; i < 4; i++) {
+        free(queue[i]);
+    }
+    free(queue);
+    free(indices_arrivaltime);
+    free(indices_remaintime);
+    // fclose(outputFile);
+    return 0;
+}
+int task4_7(Process *processes, int processesCount, int timeslice, const char* fileName, FILE * outputFile,int task_store,int ***store) {
+    int **sort = malloc(6 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        sort[i] = malloc(processesCount * sizeof(int));
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+        sort[4][i] = 0; // 完成時間
+        sort[5][i] = 0; // 是否進入CPU
+    }
+    sortData.sort = sort;
+    sortData.processesCount = processesCount;
+    int *indices_arrivaltime = malloc(processesCount * sizeof(int));
+    int *indices_remaintime = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        indices_arrivaltime[i] = i;
+    }
+    qsort(indices_arrivaltime, processesCount, sizeof(int), compare_arrivaltime_PID);//按照arrival time排序
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices_arrivaltime[i];
+        printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", sort[0][idx], sort[1][idx], sort[3][idx]);
+    }
+    int current_time = 0;
+    int loopcount=-1;
+    int completed = 0;
+    int front = 0, rear = 0;
+    int inside = 0;// 紀錄多少process在queue
+    int **queue = malloc(4 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        queue[0] = malloc(processesCount * sizeof(int));//PID
+        queue[1] = malloc(processesCount * sizeof(int));//remaintime
+        queue[2] = malloc(processesCount * sizeof(int));//arrival
+        queue[3] = malloc(processesCount * sizeof(int));//cpu burst time
+    }
+    for(int i = 0; i < processesCount; i++){
+        queue[0][i] = 1000001+i;
+        queue[1][i] = 1000001+i;
+        queue[2][i] = 1000001+i;
+        queue[3][i] = 1000001+i;
+    }
+    queueData.queue = queue;
+    queueData.processesCount = processesCount;
+
+    fprintf(outputFile, "\n==        SRTF==\n");
+    current_time=-1;
+    while(completed < processesCount){
+        current_time++;
+        loopcount++;
+        printf("\n \n");
+        printf("現在時間:%d\n",current_time);
+        printf("loopcount:%d\n",loopcount);
+        for(int i = 0; i < processesCount; i++){ //確認有沒有process進入queue
+            int idx = indices_arrivaltime[i];
+            if(sort[1][idx] <= current_time && sort[5][idx] == 0){
+                queue[0][rear] = sort[0][idx]; //pid
+                queue[1][rear] = sort[3][idx]; //remain time
+                queue[2][rear] = sort[1][idx]; //arrival time
+                sort[5][idx] = 1; //process進入queue
+                printf("process%d 進入queue\n", queue[0][rear]);
+                rear++;
+                inside++; //process在queue數量+1
+                // context_switch_test = 1; //有process要進入queue，可能會搶先
+            }
+        }
+        if(inside==0){//這秒沒有process在queue
+            fprintf(outputFile,"-");
+        }
+        else{
+            for (int i = 0; i < processesCount; i++) {////按照remaintime_arrival_PID排序
+            indices_remaintime[i] = i;
+            }
+            qsort(indices_remaintime, processesCount, sizeof(int), compare_remaintime_arrival_PID);//按照remaintime_arrival_PID排序
+            for(int i = 0; i < processesCount; i++){
+                int idx = indices_remaintime[i];
+                printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", queue[0][idx], queue[2][idx], queue[1][idx]);////按照remaintime_arrival_PID排序
+            }
+            //執行排序第一個的process
+            int idx = indices_remaintime[0];
+            fprintf(outputFile,"%c",numberToChar(queue[0][idx]));//每秒輸出一次
+            queue[1][idx]--;//剩餘時間-1
+            if(queue[1][idx]==0){//即將結束
+                int idx_arr = indices_remaintime_TO_indices_arrivaltime(processesCount, sort, queue, idx, indices_arrivaltime);
+                sort[4][idx_arr] = current_time+1; //紀錄完成時間,  因為當時間為1，process進入，burst time=1，為了計算方便記錄在同一秒鐘
+                queue[0][idx] = 1000000;
+                queue[1][idx] = 1000000;
+                queue[2][idx] = 1000000;
+                completed++;
+                inside--;
+            }
+
+
+        }
+    }
+    // fprintf(outputFile, "\n===========================================================\n");
+    calculate_times_SRTF_task7(sort, processesCount, outputFile,task_store,store);
+    for (int i = 0; i < 6; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    for (int i = 0; i < 4; i++) {
+        free(queue[i]);
+    }
+    free(queue);
+    free(indices_arrivaltime);
+    free(indices_remaintime);
+    // fclose(outputFile);
+    return 0;
+}
+int task3(Process *processes, int processesCount, int timeslice, const char* fileName) {
+    int **sort = malloc(6 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        sort[i] = malloc(processesCount * sizeof(int));
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+        sort[4][i] = 0; // 完成時間
+        sort[5][i] = 0; // 是否進入CPU
+    }
+    sortData.sort = sort;
+    sortData.processesCount = processesCount;
+    int *indices_arrivaltime = malloc(processesCount * sizeof(int));
+    int *indices_remaintime = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        indices_arrivaltime[i] = i;
+    }
+    qsort(indices_arrivaltime, processesCount, sizeof(int), compare_arrivaltime_PID);
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices_arrivaltime[i];
+        printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", sort[0][idx], sort[1][idx], sort[3][idx]);
+    }
+    int current_time = 0;
+    int completed = 0;
+    int front = 0, rear = 0;
+    int inside = 0;// 紀錄多少process在queue
+    int **queue = malloc(4 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        queue[0] = malloc(processesCount * sizeof(int));//PID
+        queue[1] = malloc(processesCount * sizeof(int));//remaintime
+        queue[2] = malloc(processesCount * sizeof(int));//arrival
+        queue[3] = malloc(processesCount * sizeof(int));//cpu burst time
+    }
+    for(int i = 0; i < processesCount; i++){
+        queue[0][i] = 1000001+i;
+        queue[1][i] = 1000001+i;
+        queue[2][i] = 1000001+i;
+        queue[3][i] = 1000001+i;
+    }
+    queueData.queue = queue;
+    queueData.processesCount = processesCount;
+    char outputFilePath[1024];
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw2/hw2_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    fprintf(outputFile, "SJF\n");
+    fprintf(outputFile, "==         SJF==\n");
+    while(completed < processesCount){
+        printf("現在時間: %d\n", current_time);
+        printf("現在完成的process數量: %d\n", completed);
+        printf("inside = %d\n", inside);
+        for(int i = 0; i < processesCount; i++){ //確認有沒有process進入queue
+            int idx = indices_arrivaltime[i];
+            if(sort[1][idx] <= current_time && sort[5][idx] == 0){
+                queue[0][rear] = sort[0][idx];//pid
+                queue[1][rear] = sort[3][idx];//remain time
+                queue[2][rear] = sort[1][idx];//arrival time
+                sort[5][idx] = 1;//process進入queue
+                printf("process%d 進入queue\n", queue[0][rear]);
+                rear++;
+                inside++;//process在queue數量+1
+            }
+        }
+        printf("確認有沒有process進入queue之後\n");
+        printf("front = %d\n", front);
+        printf("rear = %d\n", rear);
+        printf("inside = %d\n", inside);
+        if(inside==0){//沒有PROCESS在QUEUE中
+            current_time++;
+            fprintf(outputFile, "-");
+        }
+        else{//有PROCESS在QUEUE中
+            for (int i = 0; i < processesCount; i++) {
+                indices_remaintime[i] = i;
+            }
+            qsort(indices_remaintime, processesCount, sizeof(int), compare_remaintime_arrival_PID);
+            for(int i = 0; i < processesCount; i++){
+                int idx = indices_remaintime[i];
+                printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", queue[0][idx], queue[2][idx], queue[1][idx]);  
+            }
+            for(int i = 0; i < processesCount; i++){//找最適合的process執行
+                int idx = indices_remaintime[i];
+                if(queue[0][idx]<1000000){
+                    for(int i=0;i<queue[1][idx];i++){
+                        fprintf(outputFile, "%c",numberToChar(queue[0][idx]));
+                    }
+                    current_time=current_time+queue[1][idx];
+                    int idx_arr=indices_remaintime_TO_indices_arrivaltime(processesCount,sort,queue,idx,indices_arrivaltime);
+                    sort[4][idx_arr]=current_time;//紀錄完成時間
+                    printf("processID=%d結束,完成時間=%d\n", sort[0][idx_arr],sort[4][idx_arr]);
+                    completed++;
+                    queue[0][idx]=1000000;
+                    queue[1][idx]=1000000;
+                    queue[2][idx]=1000000;
+                    inside--;
+                    break;   
+                }
+            }
+        }
+    }
+    fprintf(outputFile, "\n===========================================================\n");
+    calculate_times_SJF(sort, processesCount, outputFile);
+    for (int i = 0; i < 6; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    for (int i = 0; i < 4; i++) {
+        free(queue[i]);
+    }
+    free(queue);
+    free(indices_arrivaltime);
+    free(indices_remaintime);
+    fclose(outputFile);
+    return 0;
+}
+int task4(Process *processes, int processesCount, int timeslice, const char* fileName) {
+    int **sort = malloc(6 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        sort[i] = malloc(processesCount * sizeof(int));
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+        sort[4][i] = 0; // 完成時間
+        sort[5][i] = 0; // 是否進入CPU
+    }
+    sortData.sort = sort;
+    sortData.processesCount = processesCount;
+    int *indices_arrivaltime = malloc(processesCount * sizeof(int));
+    int *indices_remaintime = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        indices_arrivaltime[i] = i;
+    }
+    qsort(indices_arrivaltime, processesCount, sizeof(int), compare_arrivaltime_PID);//按照arrival time排序
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices_arrivaltime[i];
+        printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", sort[0][idx], sort[1][idx], sort[3][idx]);
+    }
+    int current_time = 0;
+    int loopcount=-1;
+    int completed = 0;
+    int front = 0, rear = 0;
+    int inside = 0;// 紀錄多少process在queue
+    int **queue = malloc(4 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        queue[0] = malloc(processesCount * sizeof(int));//PID
+        queue[1] = malloc(processesCount * sizeof(int));//remaintime
+        queue[2] = malloc(processesCount * sizeof(int));//arrival
+        queue[3] = malloc(processesCount * sizeof(int));//cpu burst time
+    }
+    for(int i = 0; i < processesCount; i++){
+        queue[0][i] = 1000001+i;
+        queue[1][i] = 1000001+i;
+        queue[2][i] = 1000001+i;
+        queue[3][i] = 1000001+i;
+    }
+    queueData.queue = queue;
+    queueData.processesCount = processesCount;
+    char outputFilePath[1024];
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw2/hw2_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    fprintf(outputFile, "SRTF\n");
+    fprintf(outputFile, "==        SRTF==\n");
+    current_time=-1;
+    while(completed < processesCount){
+        current_time++;
+        loopcount++;
+        printf("\n \n");
+        printf("現在時間:%d\n",current_time);
+        printf("loopcount:%d\n",loopcount);
+        for(int i = 0; i < processesCount; i++){ //確認有沒有process進入queue
+            int idx = indices_arrivaltime[i];
+            if(sort[1][idx] <= current_time && sort[5][idx] == 0){
+                queue[0][rear] = sort[0][idx]; //pid
+                queue[1][rear] = sort[3][idx]; //remain time
+                queue[2][rear] = sort[1][idx]; //arrival time
+                sort[5][idx] = 1; //process進入queue
+                printf("process%d 進入queue\n", queue[0][rear]);
+                rear++;
+                inside++; //process在queue數量+1
+                // context_switch_test = 1; //有process要進入queue，可能會搶先
+            }
+        }
+        if(inside==0){//這秒沒有process在queue
+            fprintf(outputFile,"-");
+        }
+        else{
+            for (int i = 0; i < processesCount; i++) {////按照remaintime_arrival_PID排序
+            indices_remaintime[i] = i;
+            }
+            qsort(indices_remaintime, processesCount, sizeof(int), compare_remaintime_arrival_PID);//按照remaintime_arrival_PID排序
+            for(int i = 0; i < processesCount; i++){
+                int idx = indices_remaintime[i];
+                printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", queue[0][idx], queue[2][idx], queue[1][idx]);////按照remaintime_arrival_PID排序
+            }
+            //執行排序第一個的process
+            int idx = indices_remaintime[0];
+            fprintf(outputFile,"%c",numberToChar(queue[0][idx]));//每秒輸出一次
+            queue[1][idx]--;//剩餘時間-1
+            if(queue[1][idx]==0){//即將結束
+                int idx_arr = indices_remaintime_TO_indices_arrivaltime(processesCount, sort, queue, idx, indices_arrivaltime);
+                sort[4][idx_arr] = current_time+1; //紀錄完成時間,  因為當時間為1，process進入，burst time=1，為了計算方便記錄在同一秒鐘
+                queue[0][idx] = 1000000;
+                queue[1][idx] = 1000000;
+                queue[2][idx] = 1000000;
+                completed++;
+                inside--;
+            }
+
+
+        }
+    }
+    fprintf(outputFile, "\n===========================================================\n");
+    calculate_times_SRTF(sort, processesCount, outputFile);
+    for (int i = 0; i < 6; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    for (int i = 0; i < 4; i++) {
+        free(queue[i]);
+    }
+    free(queue);
+    free(indices_arrivaltime);
+    free(indices_remaintime);
+    fclose(outputFile);
+    return 0;
+}
+int task5(Process *processes, int processesCount, int timeslice, const char* fileName) {//HRRN
+    int **sort = malloc(6 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        sort[i] = malloc(processesCount * sizeof(int));
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+        sort[4][i] = 0; // 完成時間
+        sort[5][i] = 0; // 是否進入CPU
+    }
+    sortData.sort = sort;
+    sortData.processesCount = processesCount;
+    int *indices_arrivaltime = malloc(processesCount * sizeof(int));
+    int *indices_remaintime = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        indices_arrivaltime[i] = i;
+    }
+    qsort(indices_arrivaltime, processesCount, sizeof(int), compare_arrivaltime_PID);//按照response ratio HRRN 排序
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices_arrivaltime[i];
+        printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", sort[0][idx], sort[1][idx], sort[3][idx]);
+    }
+    int current_time = 0;
+    int loopcount=-1;
+    int old_pid=-1,old_idx=-1;
+    int completed = 0;
+    int front = 0, rear = 0;
+    int inside = 0;// 紀錄多少process在queue
+    int **queue = malloc(4 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        queue[0] = malloc(processesCount * sizeof(int));//PID
+        queue[1] = malloc(processesCount * sizeof(int));//remaintime
+        queue[2] = malloc(processesCount * sizeof(int));//arrival
+        queue[3] = malloc(processesCount * sizeof(int));//cpu burst time
+    }
+    for(int i = 0; i < processesCount; i++){
+        queue[0][i] = 1000001+i;
+        queue[1][i] = 1000001+i;
+        queue[2][i] = 1000001+i;
+        queue[3][i] = 1000001+i;
+        
+    }
+    queueData.queue = queue;
+    queueData.processesCount = processesCount;
+    char outputFilePath[1024];
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw2/hw2_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    fprintf(outputFile, "HRRN\n");
+    fprintf(outputFile, "==        HRRN==\n");
+    current_time=-1;
+    while(completed < processesCount){
+        current_time++;
+        loopcount++;
+        printf("\n \n");
+        printf("現在時間:%d\n",current_time);
+        printf("loopcount:%d\n",loopcount);
+        int comein=0;//紀錄這秒有沒有process進入queue
+        for(int i = 0; i < processesCount; i++){ //確認有沒有process進入queue
+            int idx = indices_arrivaltime[i];
+            if(sort[1][idx] <= current_time && sort[5][idx] == 0 && queue[2][i] >-1){
+                queue[0][rear] = sort[0][idx]; //pid
+                queue[1][rear] = sort[3][idx]; //remain time
+                queue[2][rear] = sort[1][idx]; //arrival time
+                queue[3][rear] = sort[3][idx]; //cpu burst time
+                sort[5][idx] = 1; //process進入queue
+                printf("process%d 進入queue\n", queue[0][rear]);
+                rear++;
+                comein=1;
+                inside++; //process在queue數量+1
+            }
+        }
+        if(inside==0){//這秒沒有process在queue
+            fprintf(outputFile,"-");
+        }
+        // else if(comein==1){//這秒有process在queue 這秒有process進入queue
+        else{
+            for (int i = 0; i < processesCount; i++) {////按照remaintime_arrival_PID排序
+            indices_remaintime[i] = i;
+            }
+            queueData.current_time = current_time;
+            qsort(indices_remaintime, processesCount, sizeof(int), compare_ResponseRatio_arrivaltime_PID);//按照remaintime_arrival_PID排序
+            for(int i = 0; i < processesCount; i++){
+                int idx = indices_remaintime[i];
+                printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", queue[0][idx], queue[2][idx], queue[1][idx]);////按照remaintime_arrival_PID排序
+            }
+            //執行排序第一個的process
+            int idx = indices_remaintime[0];
+            old_pid=queue[0][idx];
+            old_idx=idx;
+            for(int i=0;i<queue[1][idx];i++){// no preemptive
+                fprintf(outputFile,"%c",numberToChar(queue[0][idx]));//每秒輸出一次
+            }
+            current_time=current_time+queue[1][idx]-1;
+            queue[1][idx]=0;//剩餘時間=0
+            int idx_arr = indices_remaintime_TO_indices_arrivaltime(processesCount, sort, queue, idx, indices_arrivaltime);
+            sort[4][idx_arr] = current_time+1; //紀錄完成時間,  因為當時間為1，process進入，burst time=1，為了計算方便記錄在同一秒鐘
+            queue[0][idx] = 1000000;
+            queue[1][idx] = 1000000;
+            queue[2][idx] = 1000000;
+            completed++;
+            inside--;
+        }
+
+    }
+    fprintf(outputFile, "\n===========================================================\n");
+    calculate_times_HRRN(sort, processesCount, outputFile);
+    for (int i = 0; i < 6; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    for (int i = 0; i < 4; i++) {
+        free(queue[i]);
+    }
+    free(queue);
+    free(indices_arrivaltime);
+    free(indices_remaintime);
+    fclose(outputFile);
+    return 0;
+}
+int task5_task7(Process *processes, int processesCount, int timeslice, const char* fileName, FILE * outputFile,int task_store,int ***store) {//HRRN
+    int **sort = malloc(6 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        sort[i] = malloc(processesCount * sizeof(int));
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+        sort[4][i] = 0; // 完成時間
+        sort[5][i] = 0; // 是否進入CPU
+    }
+    sortData.sort = sort;
+    sortData.processesCount = processesCount;
+    int *indices_arrivaltime = malloc(processesCount * sizeof(int));
+    int *indices_remaintime = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        indices_arrivaltime[i] = i;
+    }
+    qsort(indices_arrivaltime, processesCount, sizeof(int), compare_arrivaltime_PID);//按照response ratio HRRN 排序
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices_arrivaltime[i];
+        printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", sort[0][idx], sort[1][idx], sort[3][idx]);
+    }
+    int current_time = 0;
+    int loopcount=-1;
+    int old_pid=-1,old_idx=-1;
+    int completed = 0;
+    int front = 0, rear = 0;
+    int inside = 0;// 紀錄多少process在queue
+    int **queue = malloc(4 * sizeof(int*));
+    for (int i = 0; i < 6; i++) {
+        queue[0] = malloc(processesCount * sizeof(int));//PID
+        queue[1] = malloc(processesCount * sizeof(int));//remaintime
+        queue[2] = malloc(processesCount * sizeof(int));//arrival
+        queue[3] = malloc(processesCount * sizeof(int));//cpu burst time
+    }
+    for(int i = 0; i < processesCount; i++){
+        queue[0][i] = 1000001+i;
+        queue[1][i] = 1000001+i;
+        queue[2][i] = 1000001+i;
+        queue[3][i] = 1000001+i;
+        
+    }
+    queueData.queue = queue;
+    queueData.processesCount = processesCount;
+
+    fprintf(outputFile, "\n==        HRRN==\n");
+    current_time=-1;
+    while(completed < processesCount){
+        current_time++;
+        loopcount++;
+        printf("\n \n");
+        printf("現在時間:%d\n",current_time);
+        printf("loopcount:%d\n",loopcount);
+        int comein=0;//紀錄這秒有沒有process進入queue
+        for(int i = 0; i < processesCount; i++){ //確認有沒有process進入queue
+            int idx = indices_arrivaltime[i];
+            if(sort[1][idx] <= current_time && sort[5][idx] == 0 && queue[2][i] >-1){
+                queue[0][rear] = sort[0][idx]; //pid
+                queue[1][rear] = sort[3][idx]; //remain time
+                queue[2][rear] = sort[1][idx]; //arrival time
+                queue[3][rear] = sort[3][idx]; //cpu burst time
+                sort[5][idx] = 1; //process進入queue
+                printf("process%d 進入queue\n", queue[0][rear]);
+                rear++;
+                comein=1;
+                inside++; //process在queue數量+1
+            }
+        }
+        if(inside==0){//這秒沒有process在queue
+            fprintf(outputFile,"-");
+        }
+        // else if(comein==1){//這秒有process在queue 這秒有process進入queue
+        else{
+            for (int i = 0; i < processesCount; i++) {////按照remaintime_arrival_PID排序
+            indices_remaintime[i] = i;
+            }
+            queueData.current_time = current_time;
+            qsort(indices_remaintime, processesCount, sizeof(int), compare_ResponseRatio_arrivaltime_PID);//按照remaintime_arrival_PID排序
+            for(int i = 0; i < processesCount; i++){
+                int idx = indices_remaintime[i];
+                printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", queue[0][idx], queue[2][idx], queue[1][idx]);////按照remaintime_arrival_PID排序
+            }
+            //執行排序第一個的process
+            int idx = indices_remaintime[0];
+            old_pid=queue[0][idx];
+            old_idx=idx;
+            for(int i=0;i<queue[1][idx];i++){// no preemptive
+                fprintf(outputFile,"%c",numberToChar(queue[0][idx]));//每秒輸出一次
+            }
+            current_time=current_time+queue[1][idx]-1;
+            queue[1][idx]=0;//剩餘時間=0
+            int idx_arr = indices_remaintime_TO_indices_arrivaltime(processesCount, sort, queue, idx, indices_arrivaltime);
+            sort[4][idx_arr] = current_time+1; //紀錄完成時間,  因為當時間為1，process進入，burst time=1，為了計算方便記錄在同一秒鐘
+            queue[0][idx] = 1000000;
+            queue[1][idx] = 1000000;
+            queue[2][idx] = 1000000;
+            completed++;
+            inside--;
+        }
+
+    }
+
+    calculate_times_HRRN_task7(sort, processesCount, outputFile,task_store,store);
+    for (int i = 0; i < 6; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    for (int i = 0; i < 4; i++) {
+        free(queue[i]);
+    }
+    free(queue);
+    free(indices_arrivaltime);
+    free(indices_remaintime);
+    // fclose(outputFile);
+    return 0;
+}
+int task6(Process *processes, int processesCount, int timeslice, const char* fileName) {//HRRN
+    int **sort = malloc(7 * sizeof(int*));
+    for (int i = 0; i < 7; i++) {
+        sort[i] = malloc(processesCount * sizeof(int));
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+        sort[4][i] = 0; // 完成時間
+        sort[5][i] = 0; // 是否進入CPU
+        sort[6][i]= processes[i].priority;
+    }
+    sortData.sort = sort;
+    sortData.processesCount = processesCount;
+    int *indices_arrivaltime = malloc(processesCount * sizeof(int));
+    int *indices_priority = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        indices_arrivaltime[i] = i;
+    }
+    printf("\n輸出來自indices_indices_arrivaltime 1\n");
+    qsort(indices_arrivaltime, processesCount, sizeof(int), compare_arrivaltime_PID);//按照response ratio HRRN 排序
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices_arrivaltime[i];
+        printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", sort[0][idx], sort[1][idx], sort[3][idx]);
+    }
+    int *indices_after_priority_lastworktime = malloc(processesCount * sizeof(int));
+
+    int current_time = 0;
+    int loopcount=-1;
+    int old_pid=-1,old_idx=-1;
+    int completed = 0;
+    int front = 0, rear = 0;
+    int change=0;//change=0可以換,change=1不可以換
+    int inside = 0;// 紀錄多少process在queue
+    int **queue = malloc(8 * sizeof(int*));
+    for (int i = 0; i < 8; i++) {
+        queue[0] = malloc(processesCount * sizeof(int));//PID
+        queue[1] = malloc(processesCount * sizeof(int));//remaintime
+        queue[2] = malloc(processesCount * sizeof(int));//arrival
+        queue[3] = malloc(processesCount * sizeof(int));//priority
+        queue[4] = malloc(processesCount * sizeof(int));// remain timeslice
+        queue[5] = malloc(processesCount * sizeof(int));// 上次執行時間
+        queue[6] = malloc(processesCount * sizeof(int));// 紀錄有沒有在compare_after_priority_lastworktime抵擋不換掉
+        queue[7] = malloc(processesCount * sizeof(int));// 下次在compare_after_priority_lastworktime可不可以抵擋不換掉
+    }
+    for(int i = 0; i < processesCount; i++){
+        queue[0][i] = 1000001+i;
+        queue[1][i] = 1000001+i;
+        queue[2][i] = 1000001+i;
+        queue[3][i] = 1000001+i;
+        queue[4][i] = 0;
+        queue[5][i] = 0;
+    }
+    
+    queueData.queue = queue;
+    queueData.processesCount = processesCount;
+    char outputFilePath[1024];
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw2/hw2_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+
+    fprintf(outputFile, "Priority RR\n");
+    fprintf(outputFile, "==        PPRR==\n");
+    current_time=-1;
+    while(completed < processesCount){
+        // sleep(3);
+        printf("\n");
+        current_time++;
+        printf("現在時間:%d\n",current_time);
+        int comein=0;//紀錄這秒有沒有process進入queue
+        //確認要進來的process順序，用arrival time
+        for(int i = 0; i < processesCount; i++){ //確認有沒有process進入queue
+        int idx = indices_arrivaltime[i];
+            if(sort[1][idx] <= current_time && sort[5][idx] == 0 && queue[2][i] >-1){
+                queue[0][rear] = sort[0][idx]; //pid
+                queue[1][rear] = sort[3][idx]; //remain time
+                queue[2][rear] = sort[1][idx]; //arrival time
+                queue[3][rear] = sort[6][idx]; //priority
+                queue[4][rear]=0;//remain time slice
+                sort[5][idx] = 1; //process進入queue
+                printf("process%d 進入queue\n", queue[0][rear]);
+                rear++;
+                comein=1;//有process進入queue
+                inside++; //process在queue數量+1
+            }
+        }
+        if(inside==0){//這秒沒有process在queue
+            fprintf(outputFile,"-");
+        }
+        else{//這秒有process在queue
+            //先排序queue, priority
+            for (int i = 0; i < processesCount; i++) {
+                indices_priority[i] = i;
+            }
+            printf("\n輸出來自indices_priority_arrivaltime_PID 2\n");
+            qsort(indices_priority, processesCount, sizeof(int), compare_priority_arrivaltime_PID);//按照response ratio HRRN 排序
+            for(int i = 0; i < processesCount; i++){
+                int idx = indices_priority[i];
+                printf("processID=%d, remain time=%d, priority=%d\n", queue[0][idx], queue[1][idx], queue[3][idx]);
+            }
+            int idx =indices_priority[0];
+            if(change==1 && queue[3][idx]==queue[3][old_idx]){//因為即便不能交換(chande=1)，還是會因為 compare_priority_arrivaltime_PID 交換，故寫這個
+                idx=old_idx;
+            }
+            int same_priority_count=0;
+            //確保有沒有相同的priority的process
+            //加入條件，有需要換嗎
+            if(change==0){
+                for(int i = 1; i < processesCount; i++){
+                    if(queue[3][indices_priority[i]]!=queue[3][idx]){//不同的priority的process
+                        break;
+                    }
+                else{//有相同的priority的process
+                    same_priority_count++;
+                }
+            }
+            }
+
+            if(same_priority_count!=0){//排序相同priority的process即可，依靠process上次執行時間，越小越前面
+                ///////建立新的rr_queue
+                int **rr_queue = malloc(9 * sizeof(int*));
+                for (int i = 0; i < same_priority_count+1; i++) {
+                    rr_queue[0] = malloc(same_priority_count+1 * sizeof(int));//PID
+                    rr_queue[1] = malloc(same_priority_count+1 * sizeof(int));//remaintime
+                    rr_queue[2] = malloc(same_priority_count+1 * sizeof(int));//arrival
+                    rr_queue[3] = malloc(same_priority_count+1 * sizeof(int));//priority
+                    rr_queue[4] = malloc(same_priority_count+1 * sizeof(int));// remain timeslice
+                    rr_queue[5] = malloc(same_priority_count+1 * sizeof(int));// 上次執行時間
+                    rr_queue[6] = malloc(same_priority_count+1 * sizeof(int));// 對應queue的idx
+                    rr_queue[7] = malloc(same_priority_count+1 * sizeof(int));// 紀錄有沒有在compare_after_priority_lastworktime抵擋不換掉
+                    rr_queue[8] = malloc(same_priority_count+1 * sizeof(int));// 下次在compare_after_priority_lastworktime可不可以抵擋不換掉
+                }
+                // for (int i = 0; i < processesCount; i++) {
+                //     indices_after_priority_lastworktime[i] = i;
+                // }
+                for (int i = 0; i < same_priority_count+1; i++) {
+                    int idx_rr=indices_priority[i];
+                    rr_queue[0][i]= queue[0][idx_rr];//PID
+                    rr_queue[1][i]= queue[1][idx_rr];//remaintime
+                    rr_queue[2][i]= queue[2][idx_rr];//arrival
+                    rr_queue[3][i]= queue[3][idx_rr];//priority
+                    rr_queue[4][i]= queue[4][idx_rr];// remain timeslice
+                    rr_queue[5][i]= queue[5][idx_rr];// 上次執行時間
+                    rr_queue[6][i]= idx_rr;// 對應queue的idx
+                    rr_queue[7][i]= queue[6][idx_rr];// 紀錄有沒有在compare_after_priority_lastworktime抵擋不換掉
+                    rr_queue[8][i]= (rr_queue[7][i] == 0) ? 0:1;// 下次在compare_after_priority_lastworktime可不可以抵擋不換掉
+
+
+                }
+                rr_queueData.rr_queue=rr_queue;
+                rr_queueData.processesCount=processesCount;
+                ///////
+
+                for (int i = 0; i < same_priority_count+1; i++) {
+                    indices_after_priority_lastworktime[i] = i;
+                }
+                qsort(indices_after_priority_lastworktime, same_priority_count+1, sizeof(int), compare_after_priority_lastworktime);
+                printf("\n輸出來自indices_after_priority_lastworktime 3\n");
+                for(int i = 0; i < same_priority_count+1; i++){
+                    idx = indices_after_priority_lastworktime[i];
+                    printf("processID=%d, arrivalTime=%d, priority=%d\n", rr_queue[0][idx], rr_queue[1][idx], rr_queue[3][idx]);
+                }
+                int idx_lastworktime=indices_after_priority_lastworktime[0];
+                idx=rr_queue[6][idx_lastworktime];// 對應queue的idx
+                for(int i = 0; i < same_priority_count+1; i++){//回傳有沒有在compare_after_priority_lastworktime抵擋不換掉
+                    int idx_return_lastworktime_value=indices_after_priority_lastworktime[i];
+                    int idx_get_lastworktime_value=rr_queue[6][idx_return_lastworktime_value];// 對應queue的idx
+                    queue[6][idx_get_lastworktime_value]=rr_queue[7][idx_return_lastworktime_value];
+                }
+                ///    free直接刷新
+                for (int i = 0; i < 9; i++) {
+                    free(rr_queue[i]);
+                }
+                free(rr_queue);
+                //    
+            }
+            //已經決定好要執行誰了
+
+
+            int context_switch = (idx == old_idx) ? 0 : 1; // 紀錄這秒process有沒有交換
+            if(context_switch==1){//和上一個執行的process不相同
+                queue[4][old_idx] =(queue[1][old_idx]<=timeslice) ? queue[1][old_idx] :timeslice;//重置上個process的 timeslice
+                old_idx=idx;
+                queue[4][idx] =(queue[1][idx]<=timeslice) ? queue[1][idx] :timeslice;//設定新的process的 timeslice
+            }
+            printf("\n執行process %d\n",queue[0][idx]);
+            fprintf(outputFile,"%c",numberToChar(queue[0][idx]));
+            queue[4][idx]--;
+            queue[1][idx]--;
+            queue[5][idx]=current_time;
+            change=1;/////////test1
+            // 2 finish?
+            if(queue[1][idx]==0){
+                int idx_arr = indices_remaintime_TO_indices_arrivaltime(processesCount, sort, queue, idx, indices_arrivaltime);
+                sort[4][idx_arr] = current_time+1; //紀錄完成時間,  因為當時間為1，process進入，burst time=1，為了計算方便記錄在同一秒鐘
+                queue[0][idx] = 1000000;
+                queue[1][idx] = 1000000;
+                queue[2][idx] = 1000000;
+                queue[3][idx] = 1000000+idx;
+                queue[5][idx]= 1000000+idx;
+                completed++;
+                inside--;
+                change=0;
+            }
+            // 3 time out?
+            else if(queue[4][idx]==0){
+                queue[4][idx] =(queue[1][idx]<=timeslice) ? queue[1][idx] :timeslice;//重置新的process的 timeslice
+                change=0;
+            }
+            else{
+                change=1;//change=1不可以換
+            }
+        }
+        
+    }
+    // fclose(outputFile);
+    fprintf(outputFile, "\n===========================================================\n");
+    calculate_times_PPRR(sort, processesCount, outputFile);
+    for (int i = 0; i < 7; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    for (int i = 0; i < 8; i++) {
+        free(queue[i]);
+    }
+    free(queue);
+    free(indices_arrivaltime);
+    free(indices_priority);
+    free(indices_after_priority_lastworktime);
+    fclose(outputFile);
+    return 0;
+}
+int task6_task7(Process *processes, int processesCount, int timeslice, const char* fileName, FILE * outputFile,int task_store,int ***store) {//HRRN
+    int **sort = malloc(7 * sizeof(int*));
+    for (int i = 0; i < 7; i++) {
+        sort[i] = malloc(processesCount * sizeof(int));
+    }
+    for (int i = 0; i < processesCount; i++) {
+        sort[0][i] = processes[i].processID;
+        sort[1][i] = processes[i].arrivalTime;
+        sort[2][i] = i;
+        sort[3][i] = processes[i].cpuBurst;
+        sort[4][i] = 0; // 完成時間
+        sort[5][i] = 0; // 是否進入CPU
+        sort[6][i]= processes[i].priority;
+    }
+    sortData.sort = sort;
+    sortData.processesCount = processesCount;
+    int *indices_arrivaltime = malloc(processesCount * sizeof(int));
+    int *indices_priority = malloc(processesCount * sizeof(int));
+    for (int i = 0; i < processesCount; i++) {
+        indices_arrivaltime[i] = i;
+    }
+    printf("\n輸出來自indices_indices_arrivaltime 1\n");
+    qsort(indices_arrivaltime, processesCount, sizeof(int), compare_arrivaltime_PID);//按照response ratio HRRN 排序
+    for(int i = 0; i < processesCount; i++){
+        int idx = indices_arrivaltime[i];
+        printf("processID=%d, arrivalTime=%d, cpuBurst=%d\n", sort[0][idx], sort[1][idx], sort[3][idx]);
+    }
+    int *indices_after_priority_lastworktime = malloc(processesCount * sizeof(int));
+
+    int current_time = 0;
+    int loopcount=-1;
+    int old_pid=-1,old_idx=-1;
+    int completed = 0;
+    int front = 0, rear = 0;
+    int change=0;//change=0可以換,change=1不可以換
+    int inside = 0;// 紀錄多少process在queue
+    int **queue = malloc(8 * sizeof(int*));
+    for (int i = 0; i < 8; i++) {
+        queue[0] = malloc(processesCount * sizeof(int));//PID
+        queue[1] = malloc(processesCount * sizeof(int));//remaintime
+        queue[2] = malloc(processesCount * sizeof(int));//arrival
+        queue[3] = malloc(processesCount * sizeof(int));//priority
+        queue[4] = malloc(processesCount * sizeof(int));// remain timeslice
+        queue[5] = malloc(processesCount * sizeof(int));// 上次執行時間
+        queue[6] = malloc(processesCount * sizeof(int));// 紀錄有沒有在compare_after_priority_lastworktime抵擋不換掉
+        queue[7] = malloc(processesCount * sizeof(int));// 下次在compare_after_priority_lastworktime可不可以抵擋不換掉
+    }
+    for(int i = 0; i < processesCount; i++){
+        queue[0][i] = 1000001+i;
+        queue[1][i] = 1000001+i;
+        queue[2][i] = 1000001+i;
+        queue[3][i] = 1000001+i;
+        queue[4][i] = 0;
+        queue[5][i] = 0;
+    }
+    
+    // int RR_queue[2048];
+    // int *indices_RR_queue = malloc(2048 * sizeof(int));
+    // for (int i = 0; i < processesCount; i++) {
+    //     indices_RR_queue[i] = i;
+    // }
+    queueData.queue = queue;
+    queueData.processesCount = processesCount;
+
+
+    fprintf(outputFile, "\n==        PPRR==\n");
+    current_time=-1;
+    while(completed < processesCount){
+        // sleep(3);
+        printf("\n");
+        current_time++;
+        printf("現在時間:%d\n",current_time);
+        int comein=0;//紀錄這秒有沒有process進入queue
+        //確認要進來的process順序，用arrival time
+        for(int i = 0; i < processesCount; i++){ //確認有沒有process進入queue
+        int idx = indices_arrivaltime[i];
+            if(sort[1][idx] <= current_time && sort[5][idx] == 0 && queue[2][i] >-1){
+                queue[0][rear] = sort[0][idx]; //pid
+                queue[1][rear] = sort[3][idx]; //remain time
+                queue[2][rear] = sort[1][idx]; //arrival time
+                queue[3][rear] = sort[6][idx]; //priority
+                queue[4][rear]=0;//remain time slice
+                sort[5][idx] = 1; //process進入queue
+                printf("process%d 進入queue\n", queue[0][rear]);
+                rear++;
+                comein=1;//有process進入queue
+                inside++; //process在queue數量+1
+            }
+        }
+        if(inside==0){//這秒沒有process在queue
+            fprintf(outputFile,"-");
+        }
+        else{//這秒有process在queue
+            //先排序queue, priority
+            for (int i = 0; i < processesCount; i++) {
+                indices_priority[i] = i;
+            }
+            printf("\n輸出來自indices_priority_arrivaltime_PID 2\n");
+            qsort(indices_priority, processesCount, sizeof(int), compare_priority_arrivaltime_PID);//按照response ratio HRRN 排序
+            for(int i = 0; i < processesCount; i++){
+                int idx = indices_priority[i];
+                printf("processID=%d, remain time=%d, priority=%d\n", queue[0][idx], queue[1][idx], queue[3][idx]);
+            }
+            int idx =indices_priority[0];
+            if(change==1 && queue[3][idx]==queue[3][old_idx]){//因為即便不能交換(chande=1)，還是會因為 compare_priority_arrivaltime_PID 交換，故寫這個
+                idx=old_idx;
+            }
+            int same_priority_count=0;
+            //確保有沒有相同的priority的process
+            //加入條件，有需要換嗎
+            if(change==0){
+                for(int i = 1; i < processesCount; i++){
+                    if(queue[3][indices_priority[i]]!=queue[3][idx]){//不同的priority的process
+                        break;
+                    }
+                else{//有相同的priority的process
+                    same_priority_count++;
+                }
+            }
+            }
+
+            if(same_priority_count!=0){//排序相同priority的process即可，依靠process上次執行時間，越小越前面
+                ///////建立新的rr_queue
+                int **rr_queue = malloc(9 * sizeof(int*));
+                for (int i = 0; i < same_priority_count+1; i++) {
+                    rr_queue[0] = malloc(same_priority_count+1 * sizeof(int));//PID
+                    rr_queue[1] = malloc(same_priority_count+1 * sizeof(int));//remaintime
+                    rr_queue[2] = malloc(same_priority_count+1 * sizeof(int));//arrival
+                    rr_queue[3] = malloc(same_priority_count+1 * sizeof(int));//priority
+                    rr_queue[4] = malloc(same_priority_count+1 * sizeof(int));// remain timeslice
+                    rr_queue[5] = malloc(same_priority_count+1 * sizeof(int));// 上次執行時間
+                    rr_queue[6] = malloc(same_priority_count+1 * sizeof(int));// 對應queue的idx
+                    rr_queue[7] = malloc(same_priority_count+1 * sizeof(int));// 紀錄有沒有在compare_after_priority_lastworktime抵擋不換掉
+                    rr_queue[8] = malloc(same_priority_count+1 * sizeof(int));// 下次在compare_after_priority_lastworktime可不可以抵擋不換掉
+                }
+                // for (int i = 0; i < processesCount; i++) {
+                //     indices_after_priority_lastworktime[i] = i;
+                // }
+                for (int i = 0; i < same_priority_count+1; i++) {
+                    int idx_rr=indices_priority[i];
+                    rr_queue[0][i]= queue[0][idx_rr];//PID
+                    rr_queue[1][i]= queue[1][idx_rr];//remaintime
+                    rr_queue[2][i]= queue[2][idx_rr];//arrival
+                    rr_queue[3][i]= queue[3][idx_rr];//priority
+                    rr_queue[4][i]= queue[4][idx_rr];// remain timeslice
+                    rr_queue[5][i]= queue[5][idx_rr];// 上次執行時間
+                    rr_queue[6][i]= idx_rr;// 對應queue的idx
+                    rr_queue[7][i]= queue[6][idx_rr];// 紀錄有沒有在compare_after_priority_lastworktime抵擋不換掉
+                    rr_queue[8][i]= (rr_queue[7][i] == 0) ? 0:1;// 下次在compare_after_priority_lastworktime可不可以抵擋不換掉
+
+
+                }
+                rr_queueData.rr_queue=rr_queue;
+                rr_queueData.processesCount=processesCount;
+                ///////
+
+                for (int i = 0; i < same_priority_count+1; i++) {
+                    indices_after_priority_lastworktime[i] = i;
+                }
+                qsort(indices_after_priority_lastworktime, same_priority_count+1, sizeof(int), compare_after_priority_lastworktime);
+                printf("\n輸出來自indices_after_priority_lastworktime 3\n");
+                for(int i = 0; i < same_priority_count+1; i++){
+                    idx = indices_after_priority_lastworktime[i];
+                    printf("processID=%d, arrivalTime=%d, priority=%d\n", rr_queue[0][idx], rr_queue[1][idx], rr_queue[3][idx]);
+                }
+                int idx_lastworktime=indices_after_priority_lastworktime[0];
+                idx=rr_queue[6][idx_lastworktime];// 對應queue的idx
+                for(int i = 0; i < same_priority_count+1; i++){//回傳有沒有在compare_after_priority_lastworktime抵擋不換掉
+                    int idx_return_lastworktime_value=indices_after_priority_lastworktime[i];
+                    int idx_get_lastworktime_value=rr_queue[6][idx_return_lastworktime_value];// 對應queue的idx
+                    queue[6][idx_get_lastworktime_value]=rr_queue[7][idx_return_lastworktime_value];
+                }
+                ///    free直接刷新
+                for (int i = 0; i < 9; i++) {
+                    free(rr_queue[i]);
+                }
+                free(rr_queue);
+                //    
+            }
+            //已經決定好要執行誰了
+
+
+            int context_switch = (idx == old_idx) ? 0 : 1; // 紀錄這秒process有沒有交換
+            if(context_switch==1){//和上一個執行的process不相同
+                queue[4][old_idx] =(queue[1][old_idx]<=timeslice) ? queue[1][old_idx] :timeslice;//重置上個process的 timeslice
+                old_idx=idx;
+                queue[4][idx] =(queue[1][idx]<=timeslice) ? queue[1][idx] :timeslice;//設定新的process的 timeslice
+            }
+            printf("\n執行process %d\n",queue[0][idx]);
+            fprintf(outputFile,"%c",numberToChar(queue[0][idx]));
+            queue[4][idx]--;
+            queue[1][idx]--;
+            queue[5][idx]=current_time;
+            change=1;/////////test1
+            // 2 finish?
+            if(queue[1][idx]==0){
+                int idx_arr = indices_remaintime_TO_indices_arrivaltime(processesCount, sort, queue, idx, indices_arrivaltime);
+                sort[4][idx_arr] = current_time+1; //紀錄完成時間,  因為當時間為1，process進入，burst time=1，為了計算方便記錄在同一秒鐘
+                queue[0][idx] = 1000000;
+                queue[1][idx] = 1000000;
+                queue[2][idx] = 1000000;
+                queue[3][idx] = 1000000+idx;
+                queue[5][idx]= 1000000+idx;
+                completed++;
+                inside--;
+                change=0;
+            }
+            // 3 time out?
+            else if(queue[4][idx]==0){
+                queue[4][idx] =(queue[1][idx]<=timeslice) ? queue[1][idx] :timeslice;//重置新的process的 timeslice
+                change=0;
+            }
+            else{
+                change=1;//change=1不可以換
+            }
+        }
+        
+    }
+
+    calculate_times_PPRR_task7(sort, processesCount, outputFile,task_store,store);
+    for (int i = 0; i < 7; i++) {
+        free(sort[i]);
+    }
+    free(sort);
+    for (int i = 0; i < 8; i++) {
+        free(queue[i]);
+    }
+    free(queue);
+    free(indices_arrivaltime);
+    free(indices_priority);
+    free(indices_after_priority_lastworktime);
+    // fclose(outputFile);
+    return 0;
+}
+int task7(Process *processes, int processesCount, int timeslice,const char* fileName) {
+    int ***store;
+    int x = 6, y = processesCount, z = 3; // 三維矩陣的尺寸
+    // 分配第一層指標
+    store = malloc(x * sizeof(int**));
+    
+    for (int i = 0; i < x; i++) {
+        // 分配第二層指標
+        store[i] = malloc(y * sizeof(int*));
+        
+        for (int j = 0; j < y; j++) {
+            // 分配第三層指標
+            store[i][j] = malloc(z * sizeof(int));
+        }
+    }
+
+    char outputFilePath[1024];
+    // 假設桌面路徑為 '/Users/<你的用戶名稱>/Desktop/'，記得替換成你的實際路徑
+    sprintf(outputFilePath, "/media/sf_/cycu_os_hw2/hw2_output/out_%s.txt", fileName);
+    FILE *outputFile = fopen(outputFilePath, "w");
+    if (outputFile == NULL) {
+        printf("無法創建輸出檔案 %s\n", outputFilePath);
+        return 1;
+    }
+    fprintf(outputFile, "All\n");
+    int task_store=0;
+    task1_task7(processes, processesCount,timeslice,fileName,outputFile,task_store,store);
+
+    task2_task7(processes, processesCount,timeslice,fileName,outputFile,task_store,store);
+
+    task3_task7(processes, processesCount,timeslice,fileName,outputFile,task_store,store);
+
+    task4_7(processes, processesCount,timeslice,fileName,outputFile,task_store,store);
+
+    task5_task7(processes, processesCount,timeslice,fileName,outputFile,task_store,store);
+
+    task6_task7(processes, processesCount,timeslice,fileName,outputFile,task_store,store);
+    fprintf(outputFile, "\n===========================================================\n\n");
+    fprintf(outputFile, "Waiting Time\n");
+    fprintf(outputFile, "ID	FCFS	RR	SJF	SRTF	HRRN	PPRR\n");
+    fprintf(outputFile, "===========================================================\n");
+    for(int j=0;j<processesCount;j++){
+        fprintf(outputFile, "%d\t",store[0][j][0]);
+        for(int i=0;i<6-1;i++){
+            fprintf(outputFile, "%d\t",store[i][j][1]);
+        }
+        fprintf(outputFile, "%d\n",store[5][j][1]);
+    }
+    fprintf(outputFile, "===========================================================\n\n");
+    fprintf(outputFile, "Turnaround Time\n");
+    fprintf(outputFile, "ID	FCFS	RR	SJF	SRTF	HRRN	PPRR\n");
+    fprintf(outputFile, "===========================================================\n");
+    for(int j=0;j<processesCount;j++){
+        fprintf(outputFile, "%d\t",store[0][j][0]);
+        for(int i=0;i<6-1;i++){
+            fprintf(outputFile, "%d\t",store[i][j][2]);
+        }
+        fprintf(outputFile, "%d\n",store[5][j][2]);
+    }
+    
+
+
+
+
+
+
+
+
+
+    // fprintf(outputFile, "==        FCFS==\n");
+    // int current_time=0;
+    // for (int i = 0; i < processesCount; i++) {
+    //     int idx = indices[i];
+    //     while(current_time<sort[1][idx]){
+    //         fprintf(outputFile, "-");
+    //         current_time++;
+    //     }
+    //     for(int j=0; j< sort[3][idx]; j++){
+    //         fprintf(outputFile, "%c", numberToChar(sort[0][idx]));
+    //         // current_time+=timeslice;
+    //         current_time++;
+    //     }    
+    // }
+    fprintf(outputFile, "===========================================================\n\n");
+    // calculate_times(sort, processesCount, indices,outputFile);
+    // 清理
+    fclose(outputFile);
+    printf("數據已經寫入 %s\n", outputFilePath);
+    for (int i = 0; i < x; i++) {
+        for (int j = 0; j < y; j++) {
+            free(store[i][j]);
+        }
+        free(store[i]);
+    }
+    free(store);
+    // for (int i = 0; i < 3; i++) {
+    //     free(sort[i]);
+    // }
+    // free(sort);
+    // free(indices);
+}
+//find the filename in the filepath
+const char* getFileNameWithoutExtension(const char* path) {
+    const char* lastSlash = strrchr(path, '/'); // 找到最後一個斜線的位置
+    const char* fileName = lastSlash ? lastSlash + 1 : path;
+
+    static char fileNameWithoutExtension[256]; // 儲存無擴展名的檔案名
+    strcpy(fileNameWithoutExtension, fileName); // 複製檔案名到新的變數
+
+    char* lastDot = strrchr(fileNameWithoutExtension, '.'); // 找到檔案名中最後一個點的位置
+    if (lastDot != NULL) {
+        *lastDot = '\0'; // 將最後一個點之後的部分刪除，移除擴展名
+    }
+
+    return fileNameWithoutExtension;
+}
+int main() {
+    char filepath[1024];
+    int task, timeslice;
+    int index=0;
+    printf("請輸入檔案名稱: ");
+    scanf("%1023s", filepath);  // 限制輸入長度，避免緩衝區溢出
+    const char* fileName = getFileNameWithoutExtension(filepath);
+    printf("檔案名稱是:%s \n",fileName);
+    // 嘗試打開檔案
+    FILE *file = fopen(filepath, "r");  // "r" 模式表示只讀
+    if (file == NULL) {
+        perror("打開檔案失敗");  // 如果無法打開檔案，輸出錯誤原因
+        return 1;  // 非正常結束程序
+    }
+
+    // 讀取檔案內容
+    char line[2048];
+    fgets(line, sizeof(line), file);
+    sscanf(line, "%d %d", &task, &timeslice);
+    printf("%d %d\n" ,task, timeslice);
+    fgets(line, sizeof(line), file);
+    Process *processes = malloc(100 * sizeof(Process)); // Assume maximum 100 processes
+    while (fgets(line, sizeof(line), file)) {
+        int processID, cpuBurst, arrivalTime, priority;
+        if (sscanf(line, "%d %d %d %d", &processID, &cpuBurst, &arrivalTime, &priority) == 4) {
+            processes[index].processID = processID;
+            processes[index].cpuBurst = cpuBurst;
+            processes[index].arrivalTime = arrivalTime;
+            processes[index].priority = priority;
+            printf("%d %d %d %d\n", processID, cpuBurst, arrivalTime, priority);
+            index++;
+        } else {
+            printf("Error reading process data at line: %s\n", line);
+        }
+    }
+    const int processescount=index;
+
+    switch(task){
+        case 1:
+            task1(processes, processescount,timeslice,fileName);
+            break;
+        case 2:
+            task2(processes, processescount,timeslice,fileName);
+            break;        
+        case 3:
+            task3(processes, processescount, timeslice, fileName);
+            break;
+        case 4:
+            task4(processes, processescount, timeslice, fileName);
+            break;
+        case 5:
+            task5(processes, processescount, timeslice, fileName);
+            break;
+        case 6:
+            task6(processes, processescount, timeslice, fileName);
+            break;
+        case 7:
+            task7(processes, processescount, timeslice, fileName);
+            break;
+    }
+    // 關閉檔案
+    fclose(file);
+    free (processes);
+    return 0;  // 程序正常結束
+}
