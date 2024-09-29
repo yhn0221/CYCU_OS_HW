@@ -1,0 +1,22 @@
+--------------Least Frequently Used LRU Page Replacement-----------------------
+7	7	F
+0	07	F
+1	107	F
+2	210	F
+0	021
+3	302	F
+0	032
+4	403	F
+2	240	F
+3	320	F
+0	032
+3	302
+2	230
+1	120	F
+2	210
+0	021
+1	102
+7	702	F
+0	072
+1	102	F
+Page Fault = 11  Page Replaces = 8  Page Frames = 3
